@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { buildUserPrompt, parseResult, SCORE_SCHEMA, SYSTEM, MAX_ATTEMPTS, RETRY_BACKOFF_MS } = require('../scripts/lib/score');
+const { buildUserPrompt, parseResult, SCORE_SCHEMA, SYSTEM } = require('../scripts/lib/score');
 
 // ─── SYSTEM / SCHEMA sanity ────────────────────────────────────────────
 
@@ -15,14 +15,6 @@ test('SCORE_SCHEMA 强制 score/summary/highlights/tags 必填', () => {
   assert.equal(SCORE_SCHEMA.properties.score.type, 'integer');
   assert.equal(SCORE_SCHEMA.properties.score.minimum, 0);
   assert.equal(SCORE_SCHEMA.properties.score.maximum, 100);
-});
-
-test('重试配置:MAX_ATTEMPTS ≥ 2,backoff 数组非空且递增', () => {
-  assert.ok(MAX_ATTEMPTS >= 2, 'MAX_ATTEMPTS 至少 2 次才有意义');
-  assert.ok(Array.isArray(RETRY_BACKOFF_MS) && RETRY_BACKOFF_MS.length > 0);
-  for (let i = 1; i < RETRY_BACKOFF_MS.length; i++) {
-    assert.ok(RETRY_BACKOFF_MS[i] >= RETRY_BACKOFF_MS[i - 1], 'backoff 应该单调不降');
-  }
 });
 
 // ─── buildUserPrompt ───────────────────────────────────────────────────

@@ -5,11 +5,6 @@ const { spawn } = require('child_process');
 
 const MODEL = process.env.AIBP_SCORE_MODEL || 'claude-haiku-4-5';
 const TIMEOUT_MS = Number(process.env.AIBP_SCORE_TIMEOUT_MS || 180_000);
-const MAX_ATTEMPTS = Number(process.env.AIBP_SCORE_MAX_ATTEMPTS || 3);
-// 第 2、3、... 次尝试前的退避(毫秒)。超出数组长度后取最后一个。
-const RETRY_BACKOFF_MS = [1000, 3000, 9000];
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const SYSTEM = `你在评估一段 Claude Code 会话作为"AI 最佳实践案例"的含金量。
 评分维度:
@@ -158,34 +153,16 @@ function parseResult(stdout) {
   };
 }
 
-async function scoreCard(card, { onAttempt } = {}) {
+async function scoreCard(card) {
+  // 不重试:失败的会话由调用方在汇总时提示用户重新跑扫描,mtime 未变下一轮会自然重试。
   const prompt = buildUserPrompt(card);
-  let lastErr;
-  // 全失败类型都重试。Haiku 可能 schema 走样、网络抖动、claude 子进程被 macOS TCC 卡住,
-  // 这些都是临时问题,放着不管就是丢分。3 次尝试 + 指数退避足够吸收 99% 的抖动。
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    try {
-      if (onAttempt) onAttempt(attempt);
-      const stdout = await runClaude(prompt);
-      return parseResult(stdout);
-    } catch (err) {
-      lastErr = err;
-      if (attempt < MAX_ATTEMPTS) {
-        const wait = RETRY_BACKOFF_MS[attempt - 1] || RETRY_BACKOFF_MS[RETRY_BACKOFF_MS.length - 1];
-        await sleep(wait);
-      }
-    }
-  }
-  // 给上层提示这是用尽重试后的失败,日志里能看出来
-  lastErr.message = `[after ${MAX_ATTEMPTS} attempts] ${lastErr.message}`;
-  throw lastErr;
+  const stdout = await runClaude(prompt);
+  return parseResult(stdout);
 }
 
 module.exports = {
   scoreCard,
   MODEL,
-  MAX_ATTEMPTS,
-  RETRY_BACKOFF_MS,
   buildUserPrompt,
   parseResult,
   SCORE_SCHEMA,
