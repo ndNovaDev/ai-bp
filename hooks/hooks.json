@@ -1,0 +1,17 @@
+{
+  "description": "会话结束后,后台异步对当前会话评分并写入 data/index.jsonl。失败静默,不阻塞退出。",
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/on-stop.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
