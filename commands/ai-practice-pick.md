@@ -121,76 +121,48 @@ AskUserQuestion 的 options 上限是 4,所以一屏只能展示 top 4 topic。�
 
 起草整个工作流由你(主 Claude)亲自驱动。`scripts/lib/draft.js` 提供 `titleToSlug` 算文件名,其余从简。
 
-#### 5a — 出初稿和 4 道采访题(按 topic)
+#### 5a — 出标题和采访题(按 topic)
 
 基于步 4 收集到的证据(已在你的工作记忆里),为这个 topic 在**你的下一条回复里**产出一个 fenced JSON。
-**不要再 Read / Bash / 取证** — 步 4 已经够了,直接动笔。
+**不要再 Read / Bash / 取证** — 步 4 已经够了。
 
-形状(必须严格):
+形状:
 
 \`\`\`json
 {
   "proposedTitle": "会话评分流水线工程化",
-  "draftSTAR": {
-    "situation": "60-180 字,作者当时的处境,问题为什么会冒出来",
-    "task":      "60-180 字,作者给自己定的目标 + 隐含约束",
-    "action":    "60-180 字,关键动作,叙事化,不堆工具名,跳过琐碎实现",
-    "result":    "60-180 字,产物 + 量化或诚实'未量化' + 一句点到未来杠杆"
-  },
   "questions": [
-    { "module": "S", "prompt": "本次最痛的痛点是什么?",
-      "options": ["每周手动翻历史耗时", "周报内容主观难复用", "想试 Claude Code 的 hook 能力"] },
-    { "module": "T", "prompt": "...", "options": [...] },
-    { "module": "A", "prompt": "...", "options": [...] },
-    { "module": "R", "prompt": "...", "options": [...] }
+    {
+      "question": "本次最痛的痛点是什么?",
+      "header": "动机",
+      "options": ["每周手动翻历史耗时", "周报内容主观难复用", "想试 Claude Code 的 hook 能力"]
+    }
   ]
 }
 \`\`\`
 
 要求:
-- proposedTitle 8-20 字,不含日期/期号/案例编号。
-- draftSTAR 四段,每段 60-180 字。证据不足以判断的段写一句 `[需采访:具体缺什么]`,采访题要补的就是这个缺口。
-- questions **正好 4 道,按 S→T→A→R 顺序各一道**(slash command 下一步会把这 4 道压到一次 AskUserQuestion,API 上限刚好 4)。
-- 每道 options 2-3 个;第一个是基于证据的最佳猜测(用户直接点 = 静默接受),其余是其他合理角度。
-- 专问 LLM 看不出的事:动机、痛点强度、被淘汰的备选、真实 ROI、复用面、走过的弯路。不要问从证据里能推出来的事。
+- proposedTitle 是落盘文件名用的 slug 种子,简短可读即可。
+- questions **1-4 题**(不一定要 4 道,够采访就行;API 上限是 4,5b 会一屏压完)。
+- 专问 LLM 从证据看不出的事:动机、痛点强度、被淘汰的备选、真实 ROI、复用面、走过的弯路、当时心理。
+- 每题 options 2-3 个,第一个是基于证据的最佳猜测(用户直接点 = 静默接受)。
+- header 2-4 字短标签,你按题意自取(动机/选型/坑/复盘 等,不要硬塞 STAR)。
 - 用户秒懂的口语化中文。
-- 叙事对象是"事件"不是"会话"。证据来自多个 sessionId 也只当一件事写。
+- **不要预先写正文草稿。不要 STAR 结构。** 采访只为补证据,不为搭脚手架。
 
-#### 5b — 采访用户(**一次** AskUserQuestion,批量 4 题)
+#### 5b — 采访用户(**一次** AskUserQuestion)
 
-把上一步产出的 4 道 question **打包到同一次** `AskUserQuestion` 调用(API 的 `questions` 数组上限刚好 4)。
-组装方式:
+把上一步产出的 questions 打包到一次 `AskUserQuestion` 调用,字段直接对应:`question` / `header` / `options`(第一个 label 加 ` (推荐)` 后缀)。
 
-```
-AskUserQuestion(
-  questions: [
-    {
-      question: <questions[0].prompt>,
-      header: '背景',
-      multiSelect: false,
-      options: [
-        { label: <questions[0].options[0]> + ' (推荐)', description: 'LLM 基于证据的最佳猜测' },
-        { label: <questions[0].options[1]>, description: '' },
-        { label: <questions[0].options[2]>, description: '' } // 若有
-      ]
-    },
-    { ...questions[1] header='目标'... },
-    { ...questions[2] header='做法'... },
-    { ...questions[3] header='结果'... }
-  ]
-)
-```
+收集 answers 数组,严格按 questions 原顺序。用户走 Other 或跳过的 answer 就 `null`。
 
-`header` 按 module 翻译:`S → 背景`、`T → 目标`、`A → 做法`、`R → 结果`。
-
-收集 answers 数组:`[{module, prompt, answer}]`,严格按 questions 原顺序。用户走 Other 或跳过的 answer 就 `null`。
-**多 topic**:对每个 topic 各做一次 5a + 一次 5b(**每个 topic 1 屏 4 题**,不是每个 session 1 屏)。
-即便 topic 涵盖 4 个 session,也只问一次 4 题 — 这就是聚类的意义。
+**多 topic**:对每个 topic 各做一次 5a + 一次 5b(**每个 topic 一屏题**),即便涵盖 N 个 session 也只问一次 — 这就是聚类的意义。
 
 #### 5c — 写最终 markdown
 
-基于步 4 的证据 + 5a 的 STAR 初稿 + 5b 的用户答复(全在你工作记忆里),
-**在你的下一条回复里直接产出一份高质量的 AI 实践报告**。结构、字数、写作风格自定。
+基于步 4 的证据 + 5b 的用户答复(全在你工作记忆里),
+**在你的下一条回复里直接产出一份高质量的 AI 实践报告**。结构、字数、写作风格全由你定 —
+不预设 STAR,不预设标题/引用块/署名等套路,写法服务于这件事本身。
 
 写完用 `Write` 落盘。文件路径:
 
