@@ -123,6 +123,12 @@ A) 用现有证据填一份 STAR 初稿(四段)。证据不足以判断的地方
 B) 出**正好 4 道**采访题,**按 S→T→A→R 顺序各一道**(slash command 会把这 4 道压到同一个 AskUserQuestion 调用,一屏勾完)。
    每道问 LLM 看不出来的事:作者的动机、当时的痛点强度、被淘汰的备选方案、真实 ROI、下次能复用到哪里、有没有走过弯路。
 
+**叙事对象是"事件",不是"会话"**:证据包很可能包含多个 sessionId(同一件事跨了好几次对话),
+也会带 \`gitDiff\` / \`keyArtifacts\` / \`sessionTimeline\` 这些跨会话的产物证据。
+你要把整件事当一个事件叙述 — 不要按 session 拆段、不要复述 jsonl 里的对话流水,
+**优先看 git commit 改了什么、artifact 长什么样**(产物是最强证据,对话只是过程注脚)。
+单 session 也用同样写法(只是 sessionTimeline 只有一条而已)。
+
 时间范围:${rangeLabel}
 
 [证据包]
@@ -167,6 +173,11 @@ function buildFinalizePrompt({ rangeLabel, evidencePack, drafts, answers, hasMul
 时间范围:${rangeLabel}
 案例数:${hasMultipleCases ? '多案例' : '单案例'}
 
+**叙事对象是"事件",不是"会话"**:每条证据包可能涵盖多个 sessionId 和 commit,
+\`gitDiff\` / \`keyArtifacts\` / \`sessionTimeline\` 是一等公民证据。
+重点写"这件事最终改了什么 / 留下什么 artifact",而不是"在第 N 次会话里说了什么"。
+对话内容(jsonlHead/Tail)只作为动机和过程的旁证,不要复述。
+
 [证据包]
 ${JSON.stringify(evidencePack, null, 2)}
 
@@ -186,7 +197,7 @@ ${
 }
 - STAR 四段每段一个 H3 或加粗小标题:**背景**、**目标**、**做了什么**、**结果与杠杆**
 - 段落主体写散文,不要 bullet 堆叠实现细节。如果一定要列,限 1 处、每处 ≤ 4 条。
-- 文末单独一段引用块:> sessionId:... 起止时间:... 主要产物路径:...
+- 文末单独一段引用块:> 涵盖会话:<sessionId 列表,逗号分隔> 起止时间:... 主要 commit:<前 3 条 hash> 主要产物:<前 3 个文件路径>
 - 整体 700-1200 字。
 
 写作:

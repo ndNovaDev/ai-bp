@@ -46,60 +46,115 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/list.js <你解析出的 flag>
 
 返回 JSON 数组(按 score 降序的前 N 条)。空数组 → 告知用户"无候选,可能需要先 `/ai-practice-scan` 或放宽过滤",停止。
 
-### 步 2 — AI 二次排序
+### 步 2 — 你(主 Claude)自己聚类 + 重排
 
-把候选精简字段(date / score / summary / tags)pipe 给 `claude -p`,要求按
-"作为 OKR 周报案例的合适度"重排,理由考虑时效、tag 多样性、故事完整度:
+**不开子进程,不调 Haiku**。步 1 输出的候选 JSON 顶多几十 KB,你直接读进上下文,
+在下一条回复里产出一个 fenced JSON code block — 同时做两件事:
 
-```bash
-echo "$LIST_JSON" | claude -p --bare --no-session-persistence \
-  --permission-mode bypassPermissions --model claude-haiku-4-5 \
-  --output-format json \
-  --json-schema '{"type":"array","items":{"type":"object","required":["sessionId","rank","reason"],"properties":{"sessionId":{"type":"string"},"rank":{"type":"integer"},"reason":{"type":"string"}}}}' \
-  --append-system-prompt '只输出 JSON 数组,无其他文字'
-```
+1. **聚类**:把同一件事的多个 session 合成一个 topic。
+   信号综合看 summary/tags/cwd/highlights — 不要硬编码"同 cwd 即同 topic"
+   (同仓库的不同 feature 应分开;不同仓库的同类工具迭代反而该合)。
+   为什么聚类:用户视角里"一件事"才是一等公民。比如 ai-best-practice 工具自身的 4 次迭代 session,
+   应该合成一个 topic 让用户挑,而不是把 4 个高度相似的候选都摆出来。
+2. **排序**:按"作为 OKR 周报案例的合适度"给 topic 排名(rank=1 最好),
+   理由考虑时效、tag 多样性、故事完整度、产物可分发性。
 
-读 `structured_output`,排序后只保留 top 10。失败就降级到 score 排序。
+形状(在你的回复里贴出来,后续步骤直接引用):
 
-### 步 3 — 用户挑选
+\`\`\`json
+{
+  "topics": [
+    {
+      "title": "企业级 AI 评分系统四层架构",
+      "sessionIds": ["abc-123", "def-456", "..."],
+      "primarySessionId": "abc-123",
+      "rank": 1,
+      "reason": "工具四次迭代收口为一个 plugin,产物完整可分发"
+    }
+  ]
+}
+\`\`\`
 
-用 **AskUserQuestion** (`multiSelect: true`) 把 top 10 呈现:
-- label: `[88] 2026-05-13 用 hook 索引 AI 会话(automation, meta)`
-- description: 完整 summary
-- 用户勾 1-3 条
+要求:
+- title 8-20 字,概括"这件事"而非某次会话。
+- primarySessionId 选信息最完整 / score 最高的那条。
+- reason ≤ 30 字,聚合理由 + 排序理由各一句。
+- 按 rank 升序保留前 8 个 topic;明显独立的事不要硬塞一起。
 
-如果 top 10 太多塞不下 AskUserQuestion 的 4 选项上限,**分页**:先显示前 4 条让用户挑或翻页。
+为什么不调 Haiku:步 5 起草已经在主对话内做,步 2 也是纯 JSON→JSON 判断,
+没必要再走一次 \`claude -p\` 子进程(子进程那条路有 schema 校验坑、1M context 计费档、冷启动)。
+省一次冷启动 + 省一次实金 + 你的判断比 Haiku 强。
 
-### 步 4 — 组装证据包
+### 步 3 — 用户挑 topic
 
-对勾选的每个 sessionId,组装一个 `evidencePack` JSON,后面起草要用:
-- 从 `index.jsonl` 拿 `jsonlPath` / `cwd` / `tools` / `skills` / `mcpServers` / `filesEdited` / `summary` / `highlights` / `tags` / `score`
-- **Read 原始 jsonl 头 80 行 + 尾 80 行**(整文件不要塞进主对话)
-- 在该 session 的 `cwd` 下跑 `git log --oneline -20`(若是 git 仓库,失败就跳过)
-- 对 `filesEdited` 取前 8 个,跑 `git log --oneline -3 -- <file>` 拿最近 3 条 commit 主题(可选)
+用 **AskUserQuestion** (`multiSelect: true`) 把 top topic 呈现:
+- label: `[最高分 88|涵盖 4 session] 企业级 AI 评分系统四层架构`
+  - 最高分取 topic 内 max(session.score),session 数取 sessionIds.length
+- description: AI 的 reason(聚合理由 + 排序理由)+ 一句涵盖范围(日期跨度)
+- 用户勾 1-3 个 topic
 
-把以上塞进一个对象:
+AskUserQuestion 的 options 上限是 4,所以一屏只能展示 top 4 topic。如果用户都不满意,再展示下一屏(5-8)。
+**不要**把同一个 topic 里的多个 sessionId 拆成多个选项 — 那就是这次重构的反面。
+
+### 步 4 — 组装 topic 级证据包(产物驱动,不是会话驱动)
+
+对勾选的每个 topic,把它涵盖的所有 sessionId 合并成**一份事件档案**。证据包结构:
+
 ```json
 {
-  "sessionId": "...",
-  "cwd": "...",
-  "rangeLabel": "...",
-  "score": 80,
-  "summary": "...",
-  "highlights": [...],
-  "tags": [...],
-  "tools": {...},
-  "skills": [...],
-  "mcpServers": [...],
-  "filesEdited": [...],
-  "filesRecentCommits": { "/path/file.js": ["c027a71 ...", "..."] },
+  "topicTitle": "企业级 AI 评分系统四层架构",
+  "rangeLabel": "2026-W20",
+  "sessionIds": ["abc-123", "def-456", "..."],
+  "primarySessionId": "abc-123",
+  "cwds": ["/Users/lqy/tyc/ai-best-practice"],
+  "score": { "max": 88, "avg": 85 },
+  "tags": ["...合并去重..."],
+  "tools": { "Bash": 42, "Edit": 30 },
+  "skills": ["..."],
+  "mcpServers": ["..."],
+
+  "sessionTimeline": [
+    { "sessionId": "abc-123", "endedAt": "2026-05-13T...", "score": 88, "highlight": "搭起 hook + 评分骨架" },
+    { "sessionId": "def-456", "endedAt": "2026-05-14T...", "score": 85, "highlight": "加 mtime cache 省 token" }
+  ],
+
   "gitLog": ["c027a71 ...", "..."],
-  "jsonlHead": "前 80 行原文",
-  "jsonlTail": "末 80 行原文"
+  "gitDiffStat": "X files changed, Y insertions(+), Z deletions(-)",
+  "gitKeyCommits": [
+    { "hash": "c027a71", "subject": "...", "diff": "前 ~200 行 patch" }
+  ],
+
+  "filesEdited": ["...合并去重后的完整列表..."],
+  "keyArtifacts": [
+    { "path": "scripts/lib/draft.js", "content": "<= 300 行原文(超长截 head/tail)" }
+  ],
+
+  "jsonlExcerpts": [
+    { "sessionId": "abc-123", "head": "前 40 行", "tail": "末 40 行" }
+  ]
 }
 ```
 
-多案例就组装一个数组,每条都是上述结构。
+组装步骤:
+
+1. **合并 session 元数据**:遍历 topic.sessionIds,从 `index.jsonl` 拉每行,合并去重 `tags` / `skills` / `mcpServers` / `filesEdited`;`tools` 计数相加;`score.max` / `score.avg` 算一下;`cwds` 去重(通常只有 1 个)。
+
+2. **sessionTimeline**:每条 session 一行,带 `endedAt` 和一句 highlight(取 session 的 `highlights[0]`)。按时间升序。
+
+3. **gitLog + gitDiffStat**:在第一个 `cwd` 下,确定时间窗口 `[min(startedAt), max(endedAt)]`,跑:
+   ```bash
+   git log --since=<起> --until=<止> --oneline    # → gitLog
+   git diff --stat <first_hash>^..<last_hash>    # → gitDiffStat
+   ```
+   失败(非 git 仓 / 空范围)就跳过这块。
+
+4. **gitKeyCommits**:从 gitLog 里挑 top 3 个最相关的 commit(commit message 跟 topic 标题/tags 沾边的优先),每个跑 `git show --stat --patch <hash>`,patch 截到 **200 行** 以内。总 diff 不超过 **1500 行**;超了就只保留前 2 个 commit。
+
+5. **keyArtifacts**:从合并后的 `filesEdited` 里挑 top **5 个**(优先 .md / .js / .ts / .py 等代码文件;跳过 lock / node_modules / build 产物);每个文件 `Read` 完整内容,超过 **300 行**就头 150 + 尾 150 拼起来,中间插 `\n// ... <truncated N lines> ...\n`。文件不存在(被删了)就跳过。
+
+6. **jsonlExcerpts**:每个 sessionId 读头 **40 行 + 尾 40 行**(比单 session 时的 80+80 少一半,因为现在可能有多个)。
+
+如果用户勾了多个 topic,组装一个 evidencePack **数组**,每条都是上述结构。
 
 ### 步 5 — 起草:两阶段 + 一轮采访(**在主对话内做,不 spawn `claude -p`**)
 
@@ -110,10 +165,10 @@ echo "$LIST_JSON" | claude -p --bare --no-session-persistence \
 整套服务一个假想敌:公司内部的"AI 最佳实践审计 AI",它的 7 条探针已经写在
 `lib/draft.js::AUDITOR_LENS`,会自动内嵌进每条 prompt,你不用单独想。
 
-#### 5a — 出初稿和 4 道采访题(单案例)
+#### 5a — 出初稿和 4 道采访题(按 topic)
 
-对**每个**选中的 sessionId,先把 evidencePack 落到临时文件(JSON 里有特殊字符,heredoc 拼接易出错),
-再用 node 拼出 probe prompt 字符串:
+对**每个**选中的 topic,先把它的 evidencePack(步 4 组装的事件档案)落到临时文件
+(JSON 里有特殊字符,heredoc 拼接易出错),再用 node 拼出 probe prompt 字符串:
 
 ```bash
 # 1) 写 evidencePack 到 tmp(用 Write 工具或 cat heredoc 都行)
@@ -176,7 +231,8 @@ AskUserQuestion(
 `header` 按 module 翻译:`S → 背景`、`T → 目标`、`A → 做法`、`R → 结果`。
 
 收集 answers 数组:`[{module, prompt, answer}]`,严格按 questions 原顺序。用户走 Other 或跳过的 answer 就 `null`。
-**多案例**:对每条 sessionId 各做一次 5a + 一次 5b(每案 1 屏 4 题),不要把多案例的题混到一屏。
+**多 topic**:对每个 topic 各做一次 5a + 一次 5b(**每个 topic 1 屏 4 题**,不是每个 session 1 屏)。
+即便 topic 涵盖 4 个 session,也只问一次 4 题 — 这就是聚类的意义。
 
 #### 5c — 最终定稿(主对话产出,Write 落盘)
 
@@ -228,20 +284,21 @@ console.log(JSON.stringify(detectBanned(md)));
 - 你应用新 prompt,**重写一次** markdown,Write 覆盖原文件
 - 不管第二次还命不命中,**只重写一次**,接受现状
 
-#### 5e — 多案例情况
+#### 5e — 多 topic 情况
 
-如果用户在步 3 勾了 ≥ 2 条 session:先对每条 session 跑完 5a + 5b(每案 1 屏 4 题),
-然后**一次** 5c,传 `hasMultipleCases: true`,`evidencePack` 是数组,`drafts` 也是数组,
-`answers` 把多案的拼起来(每条 answer 加 `case: <idx>` 或前缀进 prompt 区分都行,
-finalize prompt 自己会处理顺序)。`buildFinalizePrompt` 会输出 H1=期号、每案 H2=案例名 的多案版式。
+如果用户在步 3 勾了 ≥ 2 个 topic:先对每个 topic 跑完 5a + 5b(每 topic 1 屏 4 题),
+然后**一次** 5c,传 `hasMultipleCases: true`,`evidencePack` 是数组(每条是一个 topic 的事件档案),
+`drafts` 也是数组,`answers` 把多 topic 的拼起来(每条 answer 加 `case: <idx>` 或前缀进 prompt 区分都行,
+finalize prompt 自己会处理顺序)。`buildFinalizePrompt` 会输出 H1=期号、每个 topic H2=案例名 的多案版式。
 
-单案例(勾 1 条)→ `hasMultipleCases: false`,H1 直接是案例名,无 H2。
+单 topic(勾 1 个)→ `hasMultipleCases: false`,H1 直接是 topic 标题,无 H2。
+(注意:单 topic 但涵盖多 session,仍是 `hasMultipleCases: false` — 这是一件事,不是多件事。)
 
 ### 步 6 — 报告
 
 - 输出文件路径
 - 是否触发了禁用短语重写(5d 命中过就提一下"已重写一次")
-- 未选中的候选(下次可用)
+- 未选中的 topic(下次可用),每条标一下涵盖几个 session
 - 提示用户:**这是初稿,审计 AI 探针只是设计假想敌,真审稿要靠人**。检阅后再提交。
 
 周报落在 `~/.ai-best-practice/weekly/`(可用 `AIBP_DATA_DIR` 覆盖),
