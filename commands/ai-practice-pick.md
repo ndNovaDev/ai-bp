@@ -182,7 +182,7 @@ finalize 会输出 H1=期号、每案 H2=case 名的多案例版式。
 - 未选中的候选(下次可用)
 - 提示用户:**这是初稿,审计 AI 探针只是设计假想敌,真审稿要靠人**。检阅后再提交。
 
-周报落在 `~/.claude/ai-best-practice/weekly/`(可用 `AIBP_DATA_DIR` 覆盖),
+周报落在 `~/.ai-best-practice/weekly/`(可用 `AIBP_DATA_DIR` 覆盖),
 不在插件目录里,插件升级不会丢历史草稿。
 
 ## 内部脚本支持的 flag(供你拼接)

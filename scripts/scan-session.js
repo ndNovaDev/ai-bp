@@ -8,9 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const { buildSessionCard } = require('./lib/parse-jsonl');
 const { scoreCard } = require('./lib/score');
-const { INDEX_PATH } = require('./lib/paths');
-
-const LOG_PATH = path.join(process.env.HOME, '.claude/logs/ai-best-practice.log');
+const { INDEX_PATH, LOG_PATH } = require('./lib/paths');
 
 const EXCLUDE_PREFIXES = [];
 

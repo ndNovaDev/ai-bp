@@ -17,10 +17,9 @@ const fs = require('fs');
 const path = require('path');
 const { buildSessionCard } = require('./lib/parse-jsonl');
 const { scoreCard } = require('./lib/score');
-const { INDEX_PATH } = require('./lib/paths');
+const { INDEX_PATH, LOG_PATH } = require('./lib/paths');
 
 const PROJECTS_ROOT = path.join(process.env.HOME, '.claude/projects');
-const LOG_PATH = path.join(process.env.HOME, '.claude/logs/ai-best-practice.log');
 // 走 `claude -p` 子进程,每个并发约占 200-500MB 内存。8 在现代 mac 上稳。
 // 想再快 / 再省可改 AIBP_CONCURRENCY。
 const CONCURRENCY = Number(process.env.AIBP_CONCURRENCY || 8);

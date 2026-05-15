@@ -6,8 +6,9 @@ allowed-tools: [Bash, AskUserQuestion, TaskOutput]
 
 # ai-practice-scan
 
-把 `~/.claude/projects/` 下的会话评分入库到 `~/.claude/ai-best-practice/data/index.jsonl`
-(数据放在插件目录外,插件升级不会丢;可用 `AIBP_DATA_DIR` 覆盖)。
+把 `~/.claude/projects/` 下的会话评分入库到 `~/.ai-best-practice/data/index.jsonl`
+(数据放在 `~/.claude/` 之外,避开 macOS App 管理弹框,也躲过插件升级覆盖;可用
+`AIBP_DATA_DIR` 覆盖根目录)。
 
 **默认行为(无参数 = 全量 + 带缓存)**:遍历所有 jsonl,首次跑会评所有 session;
 之后再跑只评新增/变更(`jsonlMtime` 未变就跳过,不花钱)。
@@ -116,7 +117,7 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/scan.js --limit 10 $FLAGS
 - 扫描总数 / ok / cached / skipped / error / 重试次数(若有)
 - 累计 cost、墙钟时间
 - `index.jsonl` 当前条数(可以用 `wc -l` 查一下)
-- 失败日志:`~/.claude/logs/ai-best-practice.log`(若有 error,提醒用户去看)
+- 失败日志:`~/.ai-best-practice/logs/ai-best-practice.log`(若有 error,提醒用户去看)
 
 ## 内部脚本支持的 flag(供你拼接,不要直接暴露给用户)
 

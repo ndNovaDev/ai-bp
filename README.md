@@ -28,7 +28,7 @@ ai-best-practice/
 数据不放在仓库目录里,默认落在用户 home 下,避免插件升级时丢历史:
 
 ```
-~/.claude/ai-best-practice/
+~/.ai-best-practice/
 ├── data/index.jsonl               # 评分索引(append/覆盖,以 sessionId 为主键)
 └── weekly/                        # /ai-practice-pick 产出
 ```
@@ -94,7 +94,7 @@ claude --plugin-dir /path/to/ai-bp
 ### 日常无感:hook 自动入库
 
 什么都不用做。每次正常退出 Claude Code 会话,Stop hook 后台异步打分并写入
-`~/.claude/ai-best-practice/data/index.jsonl`。日志在 `~/.claude/logs/ai-best-practice.log`。
+`~/.ai-best-practice/data/index.jsonl`。日志在 `~/.ai-best-practice/logs/ai-best-practice.log`。
 
 ### 写本周作文
 
@@ -109,7 +109,7 @@ claude --plugin-dir /path/to/ai-bp
 流程:列出候选 → AI 二次排序(时效/多样/完整度) → `AskUserQuestion` 给你勾 1–3 条 →
 组装证据包 → Sonnet 出 STAR 初稿 + 3-5 道采访问题 → 通过 `AskUserQuestion` 逐题问你
 (补 LLM 看不出的动机 / 真实 ROI / 杠杆) → Sonnet 融合答复出终稿 → 写入
-`~/.claude/ai-best-practice/weekly/<期号>-<案例名 slug>.md`。
+`~/.ai-best-practice/weekly/<期号>-<案例名 slug>.md`。
 
 起草面向一个"假想敌":公司内部用来审计 AI 最佳实践的 AI。它带 7 条探针(真实性、问题
 难度、AI 协作成熟度、沉淀深度、杠杆、成本诚实度、故事完整度),写在 `lib/draft.js` 的
@@ -122,7 +122,7 @@ claude --plugin-dir /path/to/ai-bp
 - `index.jsonl` 只存**元数据 + AI 生成的摘要**,**不复制原始对话内容**
 - 单条 ~1 KB,千条会话约 1 MB
 - 原文在 `~/.claude/projects/`,通过 sessionId 回查
-- 数据落在用户 home 下的 `~/.claude/ai-best-practice/`(可用 `AIBP_DATA_DIR` 覆盖),
+- 数据落在用户 home 下的 `~/.ai-best-practice/`(可用 `AIBP_DATA_DIR` 覆盖),
   插件目录不再放数据,升级插件不会丢历史。
 
 ## 环境变量
@@ -132,7 +132,7 @@ claude --plugin-dir /path/to/ai-bp
 | `AIBP_SCORE_MODEL` | `claude-haiku-4-5` | 评分模型 |
 | `AIBP_DRAFT_MODEL` | `claude-sonnet-4-6` | 起草模型 |
 | `AIBP_CONCURRENCY` | `8` | scan 并发数 |
-| `AIBP_DATA_DIR` | `~/.claude/ai-best-practice` | 数据根目录(含 `data/` 和 `weekly/`) |
+| `AIBP_DATA_DIR` | `~/.ai-best-practice` | 数据根目录(含 `data/` / `weekly/` / `logs/`) |
 | `AIBP_SCORE_TIMEOUT_MS` | `180000` | 单条评分超时 |
 | `AIBP_DRAFT_TIMEOUT_MS` | `240000` | 起草超时 |
 
@@ -147,6 +147,6 @@ claude --plugin-dir /path/to/ai-bp
 
 - hook 没触发:确认 plugin 已安装(`/plugin list` 能看到 `ai-best-practice@ai-bp`),或本地开发时启动带 `--plugin-dir`
 - 评分超时:大会话(jsonl > 500KB)可能需要把 `AIBP_SCORE_TIMEOUT_MS` 调到 300000
-- `claude -p` 返回 is_error:看 `~/.claude/logs/ai-best-practice.log` 末尾 stderr
+- `claude -p` 返回 is_error:看 `~/.ai-best-practice/logs/ai-best-practice.log` 末尾 stderr
 - 索引为空:跑一次 `/ai-practice-scan`(空 index 等 hook 慢慢攒会很久)
 - 想排除某些目录:编辑 `scripts/scan.js` 顶部的 `EXCLUDE_PREFIXES` 数组

@@ -44,20 +44,30 @@ The `env -u _VOLTA_TOOL_RECURSION` prefix is needed under Volta (see global CLAU
 
 ## Data layout (critical — easy to get wrong)
 
-**Data does NOT live in the repo.** It lives at `~/.claude/ai-best-practice/`:
+**Data does NOT live in the repo, and does NOT live under `~/.claude/`.** It lives
+at `~/.ai-best-practice/`:
 
 ```
-~/.claude/ai-best-practice/
+~/.ai-best-practice/
 ├── data/index.jsonl     # one row per session, sessionId is primary key
-└── weekly/<range>.md    # /ai-practice-pick output
+├── weekly/<期号>-<slug>.md   # /ai-practice-pick output
+└── logs/ai-best-practice.log # all log output (hook + scan + score)
 ```
+
+**HARD RULE: this plugin must never write under `~/.claude/`.** macOS Sequoia tags
+`~/.claude/` with `com.apple.provenance` for the Anthropic team (the `claude` CLI's
+signing identity, `com.anthropic.claude-code` / `Q6L2SF6YDW`). Our scripts run under
+`node` (Volta team `HX7739G8FX`), so any write into a `~/.claude/` subdir is a
+cross-team modification and triggers the iTerm/Terminal App Management permission
+dialog repeatedly. Reads from `~/.claude/projects/` are fine (read doesn't trigger).
+If you ever feel tempted to drop a file under `~/.claude/`, use `paths.js` constants
+instead.
 
 Path resolution is centralized in `scripts/lib/paths.js`. Override the root with
-`AIBP_DATA_DIR`. That module also runs a one-time migration on import: if legacy
-`<repo>/data/index.jsonl` or `<repo>/weekly/*` exist, they get moved to the new
-location. Don't add new code that hardcodes `PLUGIN_ROOT + '/data'`.
-
-Logs (separate from data): `~/.claude/logs/ai-best-practice.log`.
+`AIBP_DATA_DIR`. That module runs a one-time migration on import: if legacy
+locations (`<repo>/data/`, `~/.claude/ai-best-practice/`, `~/.claude/logs/...log`)
+exist, they get moved to the new home. Don't add new code that hardcodes any of
+these paths — always import from `paths.js`.
 
 ## Architecture
 
