@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // 扫描 ~/.claude/projects/ 下所有会话 jsonl,调 lib/score.js 打分,
-// 把结果写入 data/index.jsonl(以 sessionId 为主键)。
+// 把结果写入 ~/.claude/ai-best-practice/data/index.jsonl(以 sessionId 为主键)。
+// 路径可用 AIBP_DATA_DIR 覆盖,详见 lib/paths.js。
 //
 // 默认就是"全量扫":遍历所有 jsonl,首次跑会评所有 session;
 // 之后再跑会跳过 jsonlMtime 未变的(缓存命中,不花钱)。
@@ -16,10 +17,9 @@ const fs = require('fs');
 const path = require('path');
 const { buildSessionCard } = require('./lib/parse-jsonl');
 const { scoreCard } = require('./lib/score');
+const { INDEX_PATH } = require('./lib/paths');
 
 const PROJECTS_ROOT = path.join(process.env.HOME, '.claude/projects');
-const PLUGIN_ROOT = path.resolve(__dirname, '..');
-const INDEX_PATH = path.join(PLUGIN_ROOT, 'data/index.jsonl');
 const LOG_PATH = path.join(process.env.HOME, '.claude/logs/ai-best-practice.log');
 // 走 `claude -p` 子进程,每个并发约占 200-500MB 内存。8 在现代 mac 上稳。
 // 想再快 / 再省可改 AIBP_CONCURRENCY。

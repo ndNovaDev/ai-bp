@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// 读 data/index.jsonl,按过滤条件返回候选 JSON 列表(供 /ai-practice-pick 用)。
+// 读 ~/.claude/ai-best-practice/data/index.jsonl,按过滤条件返回候选 JSON 列表
+// (供 /ai-practice-pick 用)。路径可用 AIBP_DATA_DIR 覆盖,详见 lib/paths.js。
 //
 // 用法:
 //   node list.js                                 # 全周期 score>=60 top 30
@@ -19,10 +20,7 @@
 //   --yesterday      昨天
 
 const fs = require('fs');
-const path = require('path');
-
-const PLUGIN_ROOT = path.resolve(__dirname, '..');
-const INDEX_PATH = path.join(PLUGIN_ROOT, 'data/index.jsonl');
+const { INDEX_PATH } = require('./lib/paths');
 
 function isoWeekOf(date) {
   // 返回 date 所在 ISO 周的字符串 "YYYY-Www"

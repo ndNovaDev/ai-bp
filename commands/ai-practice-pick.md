@@ -81,15 +81,23 @@ echo "$LIST_JSON" | claude -p --bare --no-session-persistence \
 
 ```bash
 RANGE_LABEL="<根据用户参数生成,如 2026-W20 / 最近 3 天 / 全周期>" \
-OUT_PATH="${CLAUDE_PLUGIN_ROOT}/weekly/<安全文件名>.md" \
+OUT_NAME="<安全文件名(不含扩展名),如 2026-W20 / recent-3d>" \
 node -e '
-const cases = JSON.parse(require("fs").readFileSync(0,"utf8"));
+const path = require("path");
+const fs = require("fs");
+const cases = JSON.parse(fs.readFileSync(0,"utf8"));
 const { draft } = require("'${CLAUDE_PLUGIN_ROOT}'/scripts/lib/draft");
+const { WEEKLY_DIR } = require("'${CLAUDE_PLUGIN_ROOT}'/scripts/lib/paths");
+fs.mkdirSync(WEEKLY_DIR, { recursive: true });
+const outPath = path.join(WEEKLY_DIR, process.env.OUT_NAME + ".md");
 draft({rangeLabel: process.env.RANGE_LABEL, cases}).then(r=>{
-  require("fs").writeFileSync(process.env.OUT_PATH, r.markdown);
-  console.log(JSON.stringify({path: process.env.OUT_PATH, cost: r.cost}));
+  fs.writeFileSync(outPath, r.markdown);
+  console.log(JSON.stringify({path: outPath, cost: r.cost}));
 });' <<< "$CASES_JSON"
 ```
+
+周报落在 `~/.claude/ai-best-practice/weekly/`(可用 `AIBP_DATA_DIR` 覆盖),
+不在插件目录里,所以插件升级不会丢历史草稿。
 
 ### 步 6 — 报告
 

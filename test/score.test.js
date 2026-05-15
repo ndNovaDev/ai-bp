@@ -37,9 +37,9 @@ const sampleCard = {
 test('buildUserPrompt: 嵌入 cwd / turns / tools 等关键字段', () => {
   const prompt = buildUserPrompt(sampleCard);
   assert.match(prompt, /\/Users\/lqy\/proj/);
-  assert.match(prompt, /"turns": 8/);
+  assert.match(prompt, /"turns":\s?8/);
   assert.match(prompt, /figma-use/);
-  assert.match(prompt, /"Bash": 5/);
+  assert.match(prompt, /"Bash":\s?5/);
 });
 
 test('buildUserPrompt: filesEditedSample 截断到 8 条', () => {

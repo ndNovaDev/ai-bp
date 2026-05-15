@@ -6,7 +6,8 @@ allowed-tools: [Bash]
 
 # ai-practice-scan
 
-把 `~/.claude/projects/` 下的会话评分入库到 `data/index.jsonl`。
+把 `~/.claude/projects/` 下的会话评分入库到 `~/.claude/ai-best-practice/data/index.jsonl`
+(数据放在插件目录外,插件升级不会丢;可用 `AIBP_DATA_DIR` 覆盖)。
 
 **默认行为(无参数 = 全量 + 带缓存)**:遍历所有 jsonl,首次跑会评所有 session;
 之后再跑只评新增/变更(`jsonlMtime` 未变就跳过,不花钱)。
@@ -33,7 +34,7 @@ allowed-tools: [Bash]
    node ${CLAUDE_PLUGIN_ROOT}/scripts/scan.js <你解析出的参数>
    ```
 
-3. **报告**:扫描总数 / 新增 / 缓存命中 / 跳过 / 错误 / 累计 cost,以及 `data/index.jsonl` 现在多少条。
+3. **报告**:扫描总数 / 新增 / 缓存命中 / 跳过 / 错误 / 累计 cost,以及 `index.jsonl` 现在多少条。
 
 ## 内部脚本支持的 flag(供你拼接,不要直接暴露给用户)
 

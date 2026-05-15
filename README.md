@@ -21,10 +21,16 @@ ai-best-practice/
 │   ├── scan.js                    # 全量/增量扫描入口
 │   ├── scan-session.js            # 单 session(给 hook 用)
 │   ├── list.js                    # 候选过滤排序
-│   └── lib/{parse-jsonl,score,draft}.js
-├── data/index.jsonl               # 评分索引(append/覆盖,以 sessionId 为主键)
-├── weekly/                        # /ai-practice-pick 产出
+│   └── lib/{parse-jsonl,score,draft,paths}.js
 └── README.md
+```
+
+数据不放在仓库目录里,默认落在用户 home 下,避免插件升级时丢历史:
+
+```
+~/.claude/ai-best-practice/
+├── data/index.jsonl               # 评分索引(append/覆盖,以 sessionId 为主键)
+└── weekly/                        # /ai-practice-pick 产出
 ```
 
 ## 安装
@@ -83,8 +89,8 @@ claude --plugin-dir /path/to/ai-bp
 
 ### 日常无感:hook 自动入库
 
-什么都不用做。每次正常退出 Claude Code 会话,Stop hook 后台异步打分并写入 `data/index.jsonl`。
-日志在 `~/.claude/logs/ai-best-practice.log`。
+什么都不用做。每次正常退出 Claude Code 会话,Stop hook 后台异步打分并写入
+`~/.claude/ai-best-practice/data/index.jsonl`。日志在 `~/.claude/logs/ai-best-practice.log`。
 
 ### 写本周作文
 
@@ -97,17 +103,17 @@ claude --plugin-dir /path/to/ai-bp
 ```
 
 流程:列出候选 → AI 二次排序(时效/多样/完整度) → `AskUserQuestion` 给你勾 1–3 条 →
-读原始 jsonl 抽细节 → 调 Sonnet 起草 → 写入 `weekly/<range>.md`。
+读原始 jsonl 抽细节 → 调 Sonnet 起草 → 写入 `~/.claude/ai-best-practice/weekly/<range>.md`。
 
 人工检阅后提交。
 
 ## 隐私 / 体积
 
-- `data/index.jsonl` 只存**元数据 + AI 生成的摘要**,**不复制原始对话内容**
+- `index.jsonl` 只存**元数据 + AI 生成的摘要**,**不复制原始对话内容**
 - 单条 ~1 KB,千条会话约 1 MB
 - 原文在 `~/.claude/projects/`,通过 sessionId 回查
-- `data/` 和 `weekly/` 含工作内容摘要,**仓库已在 `.gitignore` 排除**。每个用户独立生成,
-  不进版本库。
+- 数据落在用户 home 下的 `~/.claude/ai-best-practice/`(可用 `AIBP_DATA_DIR` 覆盖),
+  插件目录不再放数据,升级插件不会丢历史。
 
 ## 环境变量
 
@@ -115,7 +121,8 @@ claude --plugin-dir /path/to/ai-bp
 |------|------|------|
 | `AIBP_SCORE_MODEL` | `claude-haiku-4-5` | 评分模型 |
 | `AIBP_DRAFT_MODEL` | `claude-sonnet-4-6` | 起草模型 |
-| `AIBP_CONCURRENCY` | `4` | scan 并发数 |
+| `AIBP_CONCURRENCY` | `8` | scan 并发数 |
+| `AIBP_DATA_DIR` | `~/.claude/ai-best-practice` | 数据根目录(含 `data/` 和 `weekly/`) |
 | `AIBP_SCORE_TIMEOUT_MS` | `180000` | 单条评分超时 |
 | `AIBP_DRAFT_TIMEOUT_MS` | `240000` | 起草超时 |
 
