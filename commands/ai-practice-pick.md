@@ -117,19 +117,9 @@ AskUserQuestion 的 options 上限是 4,所以一屏只能展示 top 4 topic。�
 
 多 topic 各自跑一次步 4。
 
-### 步 5 — 起草:两阶段 + 一轮采访(完全主对话 agent 化)
+### 步 5 — 起草:采访 + 写作(完全主对话 agent 化)
 
-起草整个工作流由你(主 Claude)亲自驱动。`scripts/lib/draft.js` 不再提供 prompt 模板,只提供
-**裸物料**:`AUDITOR_LENS`(假想敌 7 条探针)+ `BANNED_PHRASES` / `detectBanned`(后置检测)+
-`titleToSlug` / `extractTitle`(纯 utils)。
-
-**先 Read 一次 AUDITOR_LENS 进上下文**(整个步 5 的所有 topic 共用,只 Read 一次):
-
-```bash
-node -e 'console.log(require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/draft").AUDITOR_LENS)'
-```
-
-把输出的 7 条探针当成"写作前必读的内规",后续 STAR 初稿、采访题、最终 markdown 都按它的标准衡量。
+起草整个工作流由你(主 Claude)亲自驱动。`scripts/lib/draft.js` 提供 `titleToSlug` 算文件名,其余从简。
 
 #### 5a — 出初稿和 4 道采访题(按 topic)
 
@@ -197,28 +187,10 @@ AskUserQuestion(
 **多 topic**:对每个 topic 各做一次 5a + 一次 5b(**每个 topic 1 屏 4 题**,不是每个 session 1 屏)。
 即便 topic 涵盖 4 个 session,也只问一次 4 题 — 这就是聚类的意义。
 
-#### 5c — 最终定稿(你直接写 markdown,Write 落盘)
+#### 5c — 写最终 markdown
 
-基于步 4 的证据 + 5a 的 STAR 初稿 + 5b 的用户答复(全在你工作记忆里),**直接在你的下一条回复里
-写最终 markdown 正文**。不需要 node -e、不需要 tmp 文件、不需要再读 AUDITOR_LENS(开头已经读过)。
-
-结构规则:
-
-- **单 topic**(`hasMultipleCases: false`):H1 直接是 topic 标题(如 `# 会话评分流水线工程化`),不要 H2 副标题、不要 `## 案例 1` 这种。
-- **多 topic**(用户在步 3 勾了 ≥ 2 个):顶部 H1 用期号(如 `# AI 最佳实践 — 2026-W20`),每个 topic 一个 H2 用 topic 标题。
-- STAR 四段每段一个 H3 或加粗小标题:**背景**、**目标**、**做了什么**、**结果与杠杆**。
-- 段落主体写散文,不要 bullet 堆叠实现细节。如果一定要列,限 1 处、每处 ≤ 4 条。
-- 文末单独一段引用块:`> 涵盖会话:<sessionId 逗号分隔> 起止时间:<起>~<止> 主要 commit:<前 3 条 hash> 主要产物:<前 3 个文件路径>`
-- 单 topic 整体 700-1200 字;多 topic 每个 topic 500-900 字。
-
-写作规则:
-
-- 叙事对象是事件。涵盖多 session / 多 commit 时,写"这件事整体改了什么 / 留下什么 artifact",不要按 session 拆段、不要复述对话流水。
-- 用户没明确回答的采访题,对应段落写"本次未明确"或留白,不要瞎编。
-- 不堆工具名清单,非提不可就一句话带过("以 Claude Code 的 hook + slash command 协作")。
-- **禁用短语**(命中会触发后置重写,见 5d):`使用了`、`调用了`、`可以说`、`在一定程度上`、`总的来说`、`综上所述`、`极大地`、`大大地`、`众所周知`、`不可否认`。
-- 不要 emoji、不要 `---` 分隔线、不要"首先...其次...最后"总分总骨架。
-- 直接输出 markdown 正文,不要 \`\`\` 围栏、不要任何前言或解释。
+基于步 4 的证据 + 5a 的 STAR 初稿 + 5b 的用户答复(全在你工作记忆里),
+**在你的下一条回复里直接产出一份高质量的 AI 实践报告**。结构、字数、写作风格自定。
 
 写完用 `Write` 落盘。文件路径:
 
@@ -233,40 +205,18 @@ console.log(path.join(WEEKLY_DIR, process.env.WEEK_PREFIX + "-" + titleToSlug(pr
 
 `WEEK_PREFIX` 形如 `2026-W20`(直接取自时间范围,没 ISO 周时用 `recent-3d` 这种)。
 
-#### 5d — 后置检测禁用短语,命中则重写一次
-
-落盘后跑 `detectBanned`:
-
-```bash
-node -e '
-const fs = require("fs");
-const { detectBanned } = require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/draft");
-const md = fs.readFileSync(process.argv[1], "utf8");
-console.log(JSON.stringify(detectBanned(md)));
-' "$OUT_PATH"
-```
-
-输出是命中的禁用词数组。**空数组就完成了**。非空则:
-- 你在下一条回复里**直接重写一遍 markdown**(不用再读 AUDITOR_LENS,工作记忆里有),
-  改用平实白话绕开命中的那几个词,事实和结构保持不变。
-- Write 覆盖原文件。
-- 不管第二次还命不命中,**只重写一次**,接受现状。
-
-#### 5e — 多 topic 情况
+#### 5d — 多 topic 情况
 
 如果用户在步 3 勾了 ≥ 2 个 topic:先对每个 topic 串行跑完 步 4 + 5a + 5b(**每 topic 1 屏 4 题**)。
-所有 topic 的 STAR 初稿 + 用户答复都在你工作记忆里之后,**一次** 5c 写一份多 topic 版的 markdown
-(顶部 H1 期号 + 每 topic H2 标题)。5d 后置检测命中也只重写一次,覆盖整份文件。
+所有 topic 的 STAR 初稿 + 用户答复都在你工作记忆里之后,**一次** 5c 写一份多 topic 版的 markdown。
 
-单 topic(勾 1 个)→ H1 直接是 topic 标题,无 H2。
 单 topic 涵盖多 session 仍按单 topic 处理 — 这是一件事不是多件事,这就是聚类的意义。
 
 ### 步 6 — 报告
 
 - 输出文件路径
-- 是否触发了禁用短语重写(5d 命中过就提一下"已重写一次")
 - 未选中的 topic(下次可用),每条标一下涵盖几个 session
-- 提示用户:**这是初稿,审计 AI 探针只是设计假想敌,真审稿要靠人**。检阅后再提交。
+- 提示用户:**这是初稿,检阅后再提交**。
 
 周报落在 `~/.ai-best-practice/weekly/`(可用 `AIBP_DATA_DIR` 覆盖),
 不在插件目录里,插件升级不会丢历史草稿。
