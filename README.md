@@ -113,10 +113,9 @@ SessionEnd hook 后台异步打分并写入 `~/.ai-best-practice/data/index.json
 ```
 
 流程:列出候选 → AI 二次排序(时效/多样/完整度) → `AskUserQuestion` 给你勾 1–3 条 →
-组装证据包 → **主对话的 Claude**(就是你正在用的那个会话)出 STAR 初稿 + 正好 4 道采访题(S/T/A/R 各一)
-→ 一次 `AskUserQuestion` 把 4 题一屏问完(补 LLM 看不出的动机 / 真实 ROI / 杠杆) →
-主对话融合答复出终稿 → `Write` 到 `~/.ai-best-practice/weekly/<期号>-<案例名 slug>.md` →
-落盘后跑 `detectBanned`,命中禁用短语就重写一次。
+**主对话的 Claude**(就是你正在用的那个会话)按需收集证据(jsonl 元数据 / git log / 关键文件)
+→ 出 1–3 道采访题(补 LLM 看不出的动机 / 真实 ROI / 杠杆) → 一次 `AskUserQuestion` 一屏问完 →
+主对话融合答复出终稿 → `Write` 到 `~/.ai-best-practice/weekly/<期号>-<案例名 slug>.md`。
 
 **起草不再 spawn `claude -p`**:草稿就在你当前这个 Claude Code 会话里写,复用你的模型(通常已是 1M 上下文),
 共享鉴权,token 走 `/cost`。

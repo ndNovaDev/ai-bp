@@ -2,10 +2,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   titleToSlug,
-  detectBanned,
   extractTitle,
   AUDITOR_LENS,
-  BANNED_PHRASES,
 } = require('../scripts/lib/draft');
 
 // ─── AUDITOR_LENS sanity ──────────────────────────────────────────────
@@ -48,26 +46,6 @@ test('titleToSlug: 截断到 60 字符,不留尾随 -', () => {
   assert.ok(!slug.endsWith('-'), 'slug 不能以 - 结尾');
 });
 
-// ─── detectBanned ─────────────────────────────────────────────────────
-
-test('detectBanned: 干净文本返回空数组', () => {
-  const md = '# 标题\n\n本次产出了一个 plugin,降低了下次类似场景的边际成本。';
-  assert.deepEqual(detectBanned(md), []);
-});
-
-test('detectBanned: 命中典型 LLM 套路', () => {
-  const md = '本次工作中,我使用了 Claude Code,可以说效果显著。';
-  const hits = detectBanned(md);
-  assert.ok(hits.includes('使用了'), '应命中 "使用了"');
-  assert.ok(hits.includes('可以说'), '应命中 "可以说"');
-});
-
-test('BANNED_PHRASES 覆盖几个高频 LLM 词', () => {
-  for (const p of ['使用了', '调用了', '可以说', '综上所述']) {
-    assert.ok(BANNED_PHRASES.includes(p), `BANNED_PHRASES 缺 ${p}`);
-  }
-});
-
 // ─── extractTitle ─────────────────────────────────────────────────────
 
 test('extractTitle: 从第一行 H1 提取', () => {
@@ -81,7 +59,7 @@ test('extractTitle: 没 H1 时返回 untitled', () => {
 
 // ─── 模板已删除,确认 draft.js 不再导出它们 ──────────────────────────
 
-test('lib/draft.js 只暴露 utils,不再有 prompt 模板', () => {
+test('lib/draft.js 只暴露 utils,不再有 prompt 模板或 banned 黑名单', () => {
   const draft = require('../scripts/lib/draft');
   // 模板字符串构造函数 + JSON schema 都已废弃,起草由主 Claude 全权驱动
   assert.equal(typeof draft.buildProbePrompt, 'undefined');
@@ -91,4 +69,7 @@ test('lib/draft.js 只暴露 utils,不再有 prompt 模板', () => {
   assert.equal(typeof draft.proposeAndProbe, 'undefined');
   assert.equal(typeof draft.finalize, 'undefined');
   assert.equal(typeof draft.MODEL, 'undefined');
+  // BANNED_PHRASES 黑名单删了 — 重写循环换不掉等价 LLM 套话,只会多花 token
+  assert.equal(typeof draft.BANNED_PHRASES, 'undefined');
+  assert.equal(typeof draft.detectBanned, 'undefined');
 });
