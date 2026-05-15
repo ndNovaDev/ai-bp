@@ -68,8 +68,18 @@ Stop hook → hooks/on-stop.sh → scripts/scan-session.js ─┐
                                                         │
 /ai-practice-scan → scripts/scan.js (batch + cache) ────┤→ lib/parse-jsonl → lib/score → INDEX_PATH
                                                         │
-/ai-practice-pick → scripts/list.js → lib/draft.js → WEEKLY_DIR
+/ai-practice-pick → scripts/list.js → lib/draft.js (proposeAndProbe → 采访 → finalize) → WEEKLY_DIR
 ```
+
+**起草流程(`lib/draft.js`)是两阶段交互式的**,不是一次 LLM 大调用:
+1. `proposeAndProbe(evidencePack)` → STAR 初稿 + 3-5 道采访问题(LLM 看不出的事:动机、
+   真实 ROI、备选方案、复用面)
+2. slash command 在主对话里用 `AskUserQuestion` 逐题问用户;每题第一选项是 LLM 的最佳猜测,
+   用户直接选 = 静默接受
+3. `finalize({drafts, answers, hasMultipleCases})` → 终稿,内部跑 `BANNED_PHRASES` 后置
+   检测,命中则重写一次
+4. 整套起草服务一个假想敌:公司"AI 最佳实践审计 AI",见 `AUDITOR_LENS` 常量
+5. 单案例 H1 直接是案例名,无 H2;多案例 H1 是期号,每案 H2 是案例名
 
 Key design points to preserve when modifying:
 

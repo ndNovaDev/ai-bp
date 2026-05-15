@@ -103,7 +103,13 @@ claude --plugin-dir /path/to/ai-bp
 ```
 
 流程:列出候选 → AI 二次排序(时效/多样/完整度) → `AskUserQuestion` 给你勾 1–3 条 →
-读原始 jsonl 抽细节 → 调 Sonnet 起草 → 写入 `~/.claude/ai-best-practice/weekly/<range>.md`。
+组装证据包 → Sonnet 出 STAR 初稿 + 3-5 道采访问题 → 通过 `AskUserQuestion` 逐题问你
+(补 LLM 看不出的动机 / 真实 ROI / 杠杆) → Sonnet 融合答复出终稿 → 写入
+`~/.claude/ai-best-practice/weekly/<期号>-<案例名 slug>.md`。
+
+起草面向一个"假想敌":公司内部用来审计 AI 最佳实践的 AI。它带 7 条探针(真实性、问题
+难度、AI 协作成熟度、沉淀深度、杠杆、成本诚实度、故事完整度),写在 `lib/draft.js` 的
+`AUDITOR_LENS` 常量里,所有起草调用都会带上这层约束。
 
 人工检阅后提交。
 
