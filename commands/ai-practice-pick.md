@@ -96,101 +96,57 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/list.js <你解析出的 flag>
 AskUserQuestion 的 options 上限是 4,所以一屏只能展示 top 4 topic。如果用户都不满意,再展示下一屏(5-8)。
 **不要**把同一个 topic 里的多个 sessionId 拆成多个选项 — 那就是这次重构的反面。
 
-### 步 4 — 组装 topic 级证据包(产物驱动,不是会话驱动)
+### 步 4 — 你(主 Claude)自己取证
 
-对勾选的每个 topic,把它涵盖的所有 sessionId 合并成**一份事件档案**。证据包结构:
+**不要预先组装一份大 JSON 证据包再喂给自己** — 那是旧设计的遗留,会让一份 80-150KB 的证据原样进 prompt
+两次(probe + finalize),又慢又烧 token。
 
-```json
-{
-  "topicTitle": "企业级 AI 评分系统四层架构",
-  "rangeLabel": "2026-W20",
-  "sessionIds": ["abc-123", "def-456", "..."],
-  "primarySessionId": "abc-123",
-  "cwds": ["/Users/lqy/tyc/ai-best-practice"],
-  "score": { "max": 88, "avg": 85 },
-  "tags": ["...合并去重..."],
-  "tools": { "Bash": 42, "Edit": 30 },
-  "skills": ["..."],
-  "mcpServers": ["..."],
+改成 agent workflow:对**每个**选中的 topic,你拿着 topic.sessionIds 和元数据,
+**用你自己的工具按需收集证据,边看边判断"够了"就停**。叙事对象是事件,产物 > 对话。
 
-  "sessionTimeline": [
-    { "sessionId": "abc-123", "endedAt": "2026-05-13T...", "score": 88, "highlight": "搭起 hook + 评分骨架" },
-    { "sessionId": "def-456", "endedAt": "2026-05-14T...", "score": 85, "highlight": "加 mtime cache 省 token" }
-  ],
+下面是你应该考虑的取证清单(不是必须按顺序、不是必须全跑;根据 topic 性质自己挑):
 
-  "gitLog": ["c027a71 ...", "..."],
-  "gitDiffStat": "X files changed, Y insertions(+), Z deletions(-)",
-  "gitKeyCommits": [
-    { "hash": "c027a71", "subject": "...", "diff": "前 ~200 行 patch" }
-  ],
+- **session 元数据**:从 `~/.ai-best-practice/data/index.jsonl` 把 topic.sessionIds 对应的行 grep 出来,合并 tags / tools / skills / mcpServers / filesEdited,推算时间窗 `[min(startedAt), max(endedAt)]`。
+- **git 证据(优先级最高)**:进入 session 的 cwd,跑 `git log --since=<起> --until=<止> --oneline`;挑跟 topic 标题/tags 最相关的 1-3 个 commit 跑 `git show --stat <hash>` 看变更概览;**只有当 stat 不足以判断意图时**才去 `git show --patch` 看 diff 原文,且只看你怀疑的那个文件(`git show <hash> -- <file>`),不要拉整个 patch。
+- **artifact 原文**:从合并后的 filesEdited 挑 1-3 个最能说明问题的文件(.md / 关键代码),`Read` 看 — 限制每次 ≤ 200 行(用 offset/limit 参数,不要读整文件);看够就停。
+- **对话流水**:**默认跳过**。仅当 git + artifact 都没解释清楚作者动机时,才 Read 某个 sessionId 对应的 jsonl 文件头 40 行 + 尾 40 行(用 `head -n 40` + `tail -n 40`)。
 
-  "filesEdited": ["...合并去重后的完整列表..."],
-  "keyArtifacts": [
-    { "path": "scripts/lib/draft.js", "content": "<= 300 行原文(超长截 head/tail)" }
-  ],
+判断"够了":你能写出一份经得起 AUDITOR_LENS 7 条探针拷问的 STAR 初稿,就停。不要追求"覆盖所有证据",追求"足够下笔"。
 
-  "jsonlExcerpts": [
-    { "sessionId": "abc-123", "head": "前 40 行", "tail": "末 40 行" }
-  ]
-}
+收集过程你**不要**把每个文件原文复述出来,**不要**做信息搬运 — 你的工作记忆里有就行,下一步起草直接用。
+
+多 topic 各自跑一次步 4。
+
+### 步 5 — 起草:两阶段 + 一轮采访(完全主对话 agent 化)
+
+起草整个工作流由你(主 Claude)亲自驱动。`scripts/lib/draft.js` 不再提供 prompt 模板,只提供
+**裸物料**:`AUDITOR_LENS`(假想敌 7 条探针)+ `BANNED_PHRASES` / `detectBanned`(后置检测)+
+`titleToSlug` / `extractTitle`(纯 utils)。
+
+**先 Read 一次 AUDITOR_LENS 进上下文**(整个步 5 的所有 topic 共用,只 Read 一次):
+
+```bash
+node -e 'console.log(require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/draft").AUDITOR_LENS)'
 ```
 
-组装步骤:
-
-1. **合并 session 元数据**:遍历 topic.sessionIds,从 `index.jsonl` 拉每行,合并去重 `tags` / `skills` / `mcpServers` / `filesEdited`;`tools` 计数相加;`score.max` / `score.avg` 算一下;`cwds` 去重(通常只有 1 个)。
-
-2. **sessionTimeline**:每条 session 一行,带 `endedAt` 和一句 highlight(取 session 的 `highlights[0]`)。按时间升序。
-
-3. **gitLog + gitDiffStat**:在第一个 `cwd` 下,确定时间窗口 `[min(startedAt), max(endedAt)]`,跑:
-   ```bash
-   git log --since=<起> --until=<止> --oneline    # → gitLog
-   git diff --stat <first_hash>^..<last_hash>    # → gitDiffStat
-   ```
-   失败(非 git 仓 / 空范围)就跳过这块。
-
-4. **gitKeyCommits**:从 gitLog 里挑 top 3 个最相关的 commit(commit message 跟 topic 标题/tags 沾边的优先),每个跑 `git show --stat --patch <hash>`,patch 截到 **200 行** 以内。总 diff 不超过 **1500 行**;超了就只保留前 2 个 commit。
-
-5. **keyArtifacts**:从合并后的 `filesEdited` 里挑 top **5 个**(优先 .md / .js / .ts / .py 等代码文件;跳过 lock / node_modules / build 产物);每个文件 `Read` 完整内容,超过 **300 行**就头 150 + 尾 150 拼起来,中间插 `\n// ... <truncated N lines> ...\n`。文件不存在(被删了)就跳过。
-
-6. **jsonlExcerpts**:每个 sessionId 读头 **40 行 + 尾 40 行**(比单 session 时的 80+80 少一半,因为现在可能有多个)。
-
-如果用户勾了多个 topic,组装一个 evidencePack **数组**,每条都是上述结构。
-
-### 步 5 — 起草:两阶段 + 一轮采访(**在主对话内做,不 spawn `claude -p`**)
-
-起草不再起子进程。你(主对话的 Claude)就是写作 LLM:`lib/draft.js` 只给你提供
-**提示词模板字符串**,你拿到字符串后,在自己的下一次回复里产出 STAR / markdown。
-好处:省了 1M context 子进程的 Extra Usage 计费,也省一次模型冷启动。
-
-整套服务一个假想敌:公司内部的"AI 最佳实践审计 AI",它的 7 条探针已经写在
-`lib/draft.js::AUDITOR_LENS`,会自动内嵌进每条 prompt,你不用单独想。
+把输出的 7 条探针当成"写作前必读的内规",后续 STAR 初稿、采访题、最终 markdown 都按它的标准衡量。
 
 #### 5a — 出初稿和 4 道采访题(按 topic)
 
-对**每个**选中的 topic,先把它的 evidencePack(步 4 组装的事件档案)落到临时文件
-(JSON 里有特殊字符,heredoc 拼接易出错),再用 node 拼出 probe prompt 字符串:
+基于步 4 收集到的证据(已在你的工作记忆里),为这个 topic 在**你的下一条回复里**产出一个 fenced JSON。
+**不要再 Read / Bash / 取证** — 步 4 已经够了,直接动笔。
 
-```bash
-# 1) 写 evidencePack 到 tmp(用 Write 工具或 cat heredoc 都行)
-EVID=$(mktemp -t aibp-evid.XXXXXX.json)
-# ... 用 Write 工具把 evidencePack JSON 写到 $EVID ...
+形状(必须严格):
 
-# 2) 拿到要应用的 prompt 文本
-RANGE_LABEL='2026-W20' node -e '
-const fs = require("fs");
-const { buildProbePrompt } = require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/draft");
-const evidencePack = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-console.log(buildProbePrompt({ rangeLabel: process.env.RANGE_LABEL, evidencePack }));
-' "$EVID"
-```
-
-Bash 输出的就是给你看的 probe prompt(已内嵌 AUDITOR_LENS、证据包 JSON 和形状要求)。
-**你的下一条回复**要按那个 prompt 的形状产出严格 JSON:
-
-```json
+\`\`\`json
 {
   "proposedTitle": "会话评分流水线工程化",
-  "draftSTAR": { "situation": "...", "task": "...", "action": "...", "result": "..." },
+  "draftSTAR": {
+    "situation": "60-180 字,作者当时的处境,问题为什么会冒出来",
+    "task":      "60-180 字,作者给自己定的目标 + 隐含约束",
+    "action":    "60-180 字,关键动作,叙事化,不堆工具名,跳过琐碎实现",
+    "result":    "60-180 字,产物 + 量化或诚实'未量化' + 一句点到未来杠杆"
+  },
   "questions": [
     { "module": "S", "prompt": "本次最痛的痛点是什么?",
       "options": ["每周手动翻历史耗时", "周报内容主观难复用", "想试 Claude Code 的 hook 能力"] },
@@ -199,9 +155,16 @@ Bash 输出的就是给你看的 probe prompt(已内嵌 AUDITOR_LENS、证据包
     { "module": "R", "prompt": "...", "options": [...] }
   ]
 }
-```
+\`\`\`
 
-无需写到磁盘 — JSON 内容直接保留在你的上下文里,下一步用就行。
+要求:
+- proposedTitle 8-20 字,不含日期/期号/案例编号。
+- draftSTAR 四段,每段 60-180 字。证据不足以判断的段写一句 `[需采访:具体缺什么]`,采访题要补的就是这个缺口。
+- questions **正好 4 道,按 S→T→A→R 顺序各一道**(slash command 下一步会把这 4 道压到一次 AskUserQuestion,API 上限刚好 4)。
+- 每道 options 2-3 个;第一个是基于证据的最佳猜测(用户直接点 = 静默接受),其余是其他合理角度。
+- 专问 LLM 看不出的事:动机、痛点强度、被淘汰的备选、真实 ROI、复用面、走过的弯路。不要问从证据里能推出来的事。
+- 用户秒懂的口语化中文。
+- 叙事对象是"事件"不是"会话"。证据来自多个 sessionId 也只当一件事写。
 
 #### 5b — 采访用户(**一次** AskUserQuestion,批量 4 题)
 
@@ -234,27 +197,32 @@ AskUserQuestion(
 **多 topic**:对每个 topic 各做一次 5a + 一次 5b(**每个 topic 1 屏 4 题**,不是每个 session 1 屏)。
 即便 topic 涵盖 4 个 session,也只问一次 4 题 — 这就是聚类的意义。
 
-#### 5c — 最终定稿(主对话产出,Write 落盘)
+#### 5c — 最终定稿(你直接写 markdown,Write 落盘)
+
+基于步 4 的证据 + 5a 的 STAR 初稿 + 5b 的用户答复(全在你工作记忆里),**直接在你的下一条回复里
+写最终 markdown 正文**。不需要 node -e、不需要 tmp 文件、不需要再读 AUDITOR_LENS(开头已经读过)。
+
+结构规则:
+
+- **单 topic**(`hasMultipleCases: false`):H1 直接是 topic 标题(如 `# 会话评分流水线工程化`),不要 H2 副标题、不要 `## 案例 1` 这种。
+- **多 topic**(用户在步 3 勾了 ≥ 2 个):顶部 H1 用期号(如 `# AI 最佳实践 — 2026-W20`),每个 topic 一个 H2 用 topic 标题。
+- STAR 四段每段一个 H3 或加粗小标题:**背景**、**目标**、**做了什么**、**结果与杠杆**。
+- 段落主体写散文,不要 bullet 堆叠实现细节。如果一定要列,限 1 处、每处 ≤ 4 条。
+- 文末单独一段引用块:`> 涵盖会话:<sessionId 逗号分隔> 起止时间:<起>~<止> 主要 commit:<前 3 条 hash> 主要产物:<前 3 个文件路径>`
+- 单 topic 整体 700-1200 字;多 topic 每个 topic 500-900 字。
+
+写作规则:
+
+- 叙事对象是事件。涵盖多 session / 多 commit 时,写"这件事整体改了什么 / 留下什么 artifact",不要按 session 拆段、不要复述对话流水。
+- 用户没明确回答的采访题,对应段落写"本次未明确"或留白,不要瞎编。
+- 不堆工具名清单,非提不可就一句话带过("以 Claude Code 的 hook + slash command 协作")。
+- **禁用短语**(命中会触发后置重写,见 5d):`使用了`、`调用了`、`可以说`、`在一定程度上`、`总的来说`、`综上所述`、`极大地`、`大大地`、`众所周知`、`不可否认`。
+- 不要 emoji、不要 `---` 分隔线、不要"首先...其次...最后"总分总骨架。
+- 直接输出 markdown 正文,不要 \`\`\` 围栏、不要任何前言或解释。
+
+写完用 `Write` 落盘。文件路径:
 
 ```bash
-# 1) 把"finalize 输入"写到 tmp:{rangeLabel, evidencePack, drafts, answers, hasMultipleCases}
-FIN=$(mktemp -t aibp-fin.XXXXXX.json)
-# ... 用 Write 工具把上述对象 JSON 写到 $FIN ...
-
-# 2) 拿到要应用的 finalize prompt 文本
-node -e '
-const fs = require("fs");
-const { buildFinalizePrompt } = require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/draft");
-const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-console.log(buildFinalizePrompt(payload));
-' "$FIN"
-```
-
-Bash 输出的就是 finalize prompt(已内嵌 AUDITOR_LENS、证据包、初稿、用户答复、结构与写作规则)。
-**你的下一条回复**:直接产出最终 markdown 正文(无围栏、无前言),然后用 `Write` 工具落盘:
-
-```bash
-# 拿到落盘路径:WEEKLY_DIR/<WEEK_PREFIX>-<slug>.md
 node -e '
 const path = require("path");
 const { titleToSlug } = require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/draft");
@@ -279,20 +247,19 @@ console.log(JSON.stringify(detectBanned(md)));
 ```
 
 输出是命中的禁用词数组。**空数组就完成了**。非空则:
-- 重新拼 finalize prompt,这次给 `buildFinalizePrompt` 多传一个 `bannedHits: [...]`,
-  它会在 prompt 末尾追加"重写要求"段
-- 你应用新 prompt,**重写一次** markdown,Write 覆盖原文件
-- 不管第二次还命不命中,**只重写一次**,接受现状
+- 你在下一条回复里**直接重写一遍 markdown**(不用再读 AUDITOR_LENS,工作记忆里有),
+  改用平实白话绕开命中的那几个词,事实和结构保持不变。
+- Write 覆盖原文件。
+- 不管第二次还命不命中,**只重写一次**,接受现状。
 
 #### 5e — 多 topic 情况
 
-如果用户在步 3 勾了 ≥ 2 个 topic:先对每个 topic 跑完 5a + 5b(每 topic 1 屏 4 题),
-然后**一次** 5c,传 `hasMultipleCases: true`,`evidencePack` 是数组(每条是一个 topic 的事件档案),
-`drafts` 也是数组,`answers` 把多 topic 的拼起来(每条 answer 加 `case: <idx>` 或前缀进 prompt 区分都行,
-finalize prompt 自己会处理顺序)。`buildFinalizePrompt` 会输出 H1=期号、每个 topic H2=案例名 的多案版式。
+如果用户在步 3 勾了 ≥ 2 个 topic:先对每个 topic 串行跑完 步 4 + 5a + 5b(**每 topic 1 屏 4 题**)。
+所有 topic 的 STAR 初稿 + 用户答复都在你工作记忆里之后,**一次** 5c 写一份多 topic 版的 markdown
+(顶部 H1 期号 + 每 topic H2 标题)。5d 后置检测命中也只重写一次,覆盖整份文件。
 
-单 topic(勾 1 个)→ `hasMultipleCases: false`,H1 直接是 topic 标题,无 H2。
-(注意:单 topic 但涵盖多 session,仍是 `hasMultipleCases: false` — 这是一件事,不是多件事。)
+单 topic(勾 1 个)→ H1 直接是 topic 标题,无 H2。
+单 topic 涵盖多 session 仍按单 topic 处理 — 这是一件事不是多件事,这就是聚类的意义。
 
 ### 步 6 — 报告
 
