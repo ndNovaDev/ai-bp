@@ -1,108 +1,116 @@
 ---
-description: "从已索引的 AI 会话里挑案例并生成中文小作文初稿。默认全周期,可加 --week/--month/--since/--tag 过滤。"
-argument-hint: "[--week YYYY-Www] [--month YYYY-MM] [--since YYYY-MM-DD] [--tag X] [--top N]"
+description: "从已索引的 AI 会话里挑案例并生成中文 OKR 周报草稿。接受自然语言过滤条件。"
+argument-hint: "可选自然语言,如:本周 / 最近 3 天 / 上个月关于自动化的 / 不限"
 allowed-tools: [Bash, Read, Write, AskUserQuestion]
 ---
 
 # ai-practice-pick
 
-把"找素材 + 写作文"的全流程串起来。**默认全周期**;过滤维度通过参数显式给出。
+把"找素材 + 写作文"全流程串起来。**默认全周期高分**;过滤条件用自然语言传。
+
+## 你(Claude)收到的参数
+
+`$ARGUMENTS` 是用户的**自然语言**,例如:
+- "本周" / "这周" / "最近一周"
+- "最近三天" / "近 3 天" / "过去 72 小时"
+- "上个月" / "5 月份关于自动化的"
+- "高分的最近 10 条"
+- "" 或 "默认" — 全周期 score≥60 top 30
 
 ## 工作流(严格按顺序执行)
 
-### 1. 拉候选粗排
+### 步 0 — 解析自然语言为脚本 flag
 
-把用户的 `$ARGUMENTS` 原样转给 list.js:
+你自己想清楚(无需调 LLM),把用户输入转成下表里的 flag 组合:
+
+| 用户说 | 你解析为 |
+|---|---|
+| 本周 / 这周 | `--this-week` |
+| 上周 | `--last-week` |
+| 最近 N 天 | `--recent Nd` |
+| 上个月 / 上月 | `--last-month` |
+| 本月 | `--this-month` |
+| 2026-05 / 5 月 | `--month 2026-05` |
+| 自 5 月 1 日以来 | `--since 2026-05-01` |
+| 关于 X 的 / X 相关 | `--tag X`(X 取自 automation/refactor/debug/meta/integration/design/docs/infra/data/learning 等) |
+| 高分的 | `--min-score 80` |
+| 前 N 条 | `--top N` |
+
+多意图叠加,例如"上个月关于自动化的高分 5 条" → `--last-month --tag automation --min-score 80 --top 5`。
+
+### 步 1 — 拉候选粗排
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/list.js $ARGUMENTS
+node ${CLAUDE_PLUGIN_ROOT}/scripts/list.js <你解析出的 flag>
 ```
 
-输出是 JSON 数组(按 score 降序的前 N 条,默认 30)。
+返回 JSON 数组(按 score 降序的前 N 条)。空数组 → 告知用户"无候选,可能需要先 `/ai-practice-scan` 或放宽过滤",停止。
 
-如果数组为空:告诉用户"当前过滤条件下无候选,请先 `/ai-practice-scan` 或调整过滤"。
+### 步 2 — AI 二次排序
 
-### 2. AI 二次排序(走 claude -p,不在主对话里思考)
-
-把候选列表的精简信息(date / score / summary / highlights / tags)送给 Haiku
-做"作为本期 OKR 案例的合适度"重排,理由考虑:
-- 时效性:近期优先
-- 多样性:tags 错开,避免同主题扎堆
-- 故事完整度:highlights 数量与 summary 信息密度
-
-执行方式:用 Bash 调:
+把候选精简字段(date / score / summary / tags)pipe 给 `claude -p`,要求按
+"作为 OKR 周报案例的合适度"重排,理由考虑时效、tag 多样性、故事完整度:
 
 ```bash
-node -e '
-const cases = JSON.parse(require("fs").readFileSync(0,"utf8"));
-const slim = cases.map(c=>({sessionId:c.sessionId,date:c.date,score:c.score,summary:c.summary,tags:c.tags}));
-const prompt = `下面是若干候选 Claude Code 会话(JSON)。请按"作为 OKR 周报案例的合适度"重排,
-考虑时效、多样性、故事完整度。只输出 JSON 数组 [{"sessionId":"...","rank":1,"reason":"一句中文"}]。
-
-${JSON.stringify(slim,null,2)}`;
-process.stdout.write(prompt);
-' <<< "$LIST_JSON" | claude -p --bare --no-session-persistence \
-  --permission-mode bypassPermissions --model claude-haiku-4-5 --output-format json \
-  --json-schema '{"type":"array","items":{"type":"object","required":["sessionId","rank","reason"],"properties":{"sessionId":{"type":"string"},"rank":{"type":"integer"},"reason":{"type":"string"}}}}'
+echo "$LIST_JSON" | claude -p --bare --no-session-persistence \
+  --permission-mode bypassPermissions --model claude-haiku-4-5 \
+  --output-format json \
+  --json-schema '{"type":"array","items":{"type":"object","required":["sessionId","rank","reason"],"properties":{"sessionId":{"type":"string"},"rank":{"type":"integer"},"reason":{"type":"string"}}}}' \
+  --append-system-prompt '只输出 JSON 数组,无其他文字'
 ```
 
-把 `structured_output` 取出,作为新顺序;若失败,降级用 score 顺序,并提示用户。
+读 `structured_output`,排序后只保留 top 10。失败就降级到 score 排序。
 
-只保留 top 10 进入下一步。
+### 步 3 — 用户挑选
 
-### 3. 给用户挑选
-
-用 **AskUserQuestion** (`multiSelect: true`) 把 10 条呈现:
-- header: "案例"
-- label 形如:`[88] 2026-05-10 用 hook 索引 AI 会话(automation, meta)`
+用 **AskUserQuestion** (`multiSelect: true`) 把 top 10 呈现:
+- label: `[88] 2026-05-13 用 hook 索引 AI 会话(automation, meta)`
 - description: 完整 summary
-- 用户勾选 1-3 条作为本期素材
+- 用户勾 1-3 条
 
-### 4. 抽取细节
+如果 top 10 太多塞不下 AskUserQuestion 的 4 选项上限,**分页**:先显示前 4 条让用户挑或翻页。
 
-对勾选的 sessionId,从 index.jsonl 取 `jsonlPath`,Read 原始 jsonl 头尾各 ~50 行,
-人工抽出可贴的命令、文件、产物路径,组装成详细 case JSON:
+### 步 4 — 抽细节
 
-```json
-[
-  {
-    "sessionId": "...",
-    "title": "<根据 summary 总结的简短标题>",
-    "summary": "...",
-    "highlights": [...],
-    "tags": [...],
-    "endedAt": "...",
-    "filesEditedSample": [...],
-    "concreteEvidence": "<从 jsonl 抽出的具体命令/文件路径/PR 等>"
-  }
-]
-```
+对勾选的每个 sessionId,从 `index.jsonl` 取 `jsonlPath`,**Read 原始 jsonl 头尾各 ~50 行**
+(整文件不要塞进主对话),组装详细 case JSON。
 
-### 5. 走 claude -p 起草
+### 步 5 — 起草
+
+把 cases pipe 给 `lib/draft.js`(内部走 `claude -p --model sonnet-4-6`):
 
 ```bash
+RANGE_LABEL="<根据用户参数生成,如 2026-W20 / 最近 3 天 / 全周期>" \
+OUT_PATH="${CLAUDE_PLUGIN_ROOT}/weekly/<安全文件名>.md" \
 node -e '
 const cases = JSON.parse(require("fs").readFileSync(0,"utf8"));
 const { draft } = require("'${CLAUDE_PLUGIN_ROOT}'/scripts/lib/draft");
 draft({rangeLabel: process.env.RANGE_LABEL, cases}).then(r=>{
   require("fs").writeFileSync(process.env.OUT_PATH, r.markdown);
   console.log(JSON.stringify({path: process.env.OUT_PATH, cost: r.cost}));
-}).catch(e=>{console.error(e); process.exit(1)});
-' <<< "$CASES_JSON"
+});' <<< "$CASES_JSON"
 ```
 
-`RANGE_LABEL`:根据用户参数生成,如 `2026-W19`、`2026-05`、`since 2026-05-01`、`全周期`。
-`OUT_PATH`:`${CLAUDE_PLUGIN_ROOT}/weekly/<RANGE_LABEL>.md`(无效字符替换为 `-`)。
-
-### 6. 报告产出
+### 步 6 — 报告
 
 - 输出文件路径
-- 草稿成本
-- 候选池里**未选中**的剩余条目(供用户下次提交参考)
-- 提示:人工检阅后再提交
+- 起草成本
+- 未选中的候选(下次可用)
+- 提示用户人工检阅后再提交
 
-## 注意
+## 内部脚本支持的 flag(供你拼接)
 
-- 全程不要把整个 jsonl 往主对话里读,只读头尾必要片段
-- AskUserQuestion 限制最多 4 个选项时,改为分页或要求用户收窄过滤条件
-- 起草模型默认 Sonnet 4.6,可 `AIBP_DRAFT_MODEL` 覆盖
+| flag | 含义 |
+|---|---|
+| 无参数 | 全周期 score≥60 top 30 |
+| `--this-week` / `--last-week` | 本/上 ISO 周 |
+| `--this-month` / `--last-month` | 本/上月 |
+| `--today` / `--yesterday` | 今/昨 |
+| `--recent 7d` | 最近 N 天(d/w/m) |
+| `--week 2026-W20` | 指定 ISO 周 |
+| `--month 2026-05` | 指定月 |
+| `--since YYYY-MM-DD` `--until YYYY-MM-DD` | 自定义区间 |
+| `--tag X` | 按 tag 过滤 |
+| `--min-score 70` | score 下限(默认 60) |
+| `--top N` | 取前 N(默认 30) |
+| `--full` | 不限 min-score |

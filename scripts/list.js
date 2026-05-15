@@ -8,12 +8,67 @@
 //   node list.js --month 2026-05
 //   node list.js --tag automation
 //   node list.js --top 10 --min-score 70
+//
+// 语义化时间快捷参数(任选其一):
+//   --this-week      本 ISO 周(周一到周日)
+//   --last-week      上 ISO 周
+//   --this-month     本月
+//   --last-month     上月
+//   --recent 7d      最近 N 天(d/w/m,如 7d / 4w / 1m)
+//   --today          今天
+//   --yesterday      昨天
 
 const fs = require('fs');
 const path = require('path');
 
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const INDEX_PATH = path.join(PLUGIN_ROOT, 'data/index.jsonl');
+
+function isoWeekOf(date) {
+  // 返回 date 所在 ISO 周的字符串 "YYYY-Www"
+  const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const dow = (d.getUTCDay() + 6) % 7;
+  d.setUTCDate(d.getUTCDate() - dow + 3); // 该周周四
+  const week1 = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+  const wn = 1 + Math.round(((d - week1) / 86400_000 - 3 + ((week1.getUTCDay() + 6) % 7)) / 7);
+  return `${d.getUTCFullYear()}-W${String(wn).padStart(2, '0')}`;
+}
+
+function parseRecent(expr) {
+  const m = /^(\d+)\s*([dwm]?)$/i.exec(String(expr || '').trim());
+  if (!m) throw new Error(`bad --recent: ${expr} (use 7d/4w/1m)`);
+  const n = Number(m[1]);
+  const unit = (m[2] || 'd').toLowerCase();
+  const days = unit === 'm' ? n * 30 : unit === 'w' ? n * 7 : n;
+  return new Date(Date.now() - days * 86400_000).toISOString();
+}
+
+function startOfUTCDay(d = new Date()) {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+}
+
+function addDays(d, n) {
+  const x = new Date(d); x.setUTCDate(x.getUTCDate() + n); return x;
+}
+
+function thisWeekStr() {
+  return isoWeekOf(startOfUTCDay());
+}
+
+function lastWeekStr() {
+  return isoWeekOf(addDays(startOfUTCDay(), -7));
+}
+
+function thisMonthStr() {
+  const d = startOfUTCDay();
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+function lastMonthStr() {
+  const d = startOfUTCDay();
+  const lm = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1));
+  return `${lm.getUTCFullYear()}-${String(lm.getUTCMonth() + 1).padStart(2, '0')}`;
+}
 
 function parseArgs(argv) {
   const a = { since: null, until: null, week: null, month: null, tag: null, top: 30, minScore: 60, full: false };
@@ -26,7 +81,16 @@ function parseArgs(argv) {
     else if (k === '--tag') a.tag = argv[++i];
     else if (k === '--top') a.top = Number(argv[++i]);
     else if (k === '--min-score') a.minScore = Number(argv[++i]);
-    else if (k === '--full') a.full = true; // 不限 minScore
+    else if (k === '--full') a.full = true;
+    else if (k === '--recent') a.since = parseRecent(argv[++i]);
+    else if (k === '--today') {
+      const t = startOfUTCDay(); a.since = t.toISOString(); a.until = addDays(t, 1).toISOString();
+    } else if (k === '--yesterday') {
+      const t = startOfUTCDay(); a.since = addDays(t, -1).toISOString(); a.until = t.toISOString();
+    } else if (k === '--this-week') a.week = thisWeekStr();
+    else if (k === '--last-week') a.week = lastWeekStr();
+    else if (k === '--this-month') a.month = thisMonthStr();
+    else if (k === '--last-month') a.month = lastMonthStr();
   }
   return a;
 }

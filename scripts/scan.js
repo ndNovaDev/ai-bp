@@ -1,12 +1,16 @@
 #!/usr/bin/env node
-// 全量/增量扫描:遍历 ~/.claude/projects/ 下 cwd 命中 tyc 或 .claude 的会话,
-// 调 lib/score.js 打分,把结果写入 data/index.jsonl(以 sessionId 为主键)。
+// 扫描 ~/.claude/projects/ 下所有会话 jsonl,调 lib/score.js 打分,
+// 把结果写入 data/index.jsonl(以 sessionId 为主键)。
+//
+// 默认就是"全量扫":遍历所有 jsonl,首次跑会评所有 session;
+// 之后再跑会跳过 jsonlMtime 未变的(缓存命中,不花钱)。
 //
 // 用法:
-//   node scan.js                # 增量(jsonlMtime 未变跳过)
-//   node scan.js --full         # 全量,忽略缓存
-//   node scan.js --limit 10     # 只扫前 N 条(按 mtime 倒序)
+//   node scan.js                  # 全量,带缓存(推荐日常用)
+//   node scan.js --rescore        # 强制重评所有(忽略缓存)
+//   node scan.js --recent 7d      # 只扫最近 N 天(支持 d/w/m,如 7d / 4w / 1m)
 //   node scan.js --since 2026-05-01
+//   node scan.js --limit 10       # 只取最新 N 条(主要给调试用)
 
 const fs = require('fs');
 const path = require('path');
@@ -23,13 +27,24 @@ const CONCURRENCY = Number(process.env.AIBP_CONCURRENCY || 4);
 // 如果以后要排除某些目录,在这里加 EXCLUDE_PREFIXES。
 const EXCLUDE_PREFIXES = [];
 
+function parseRecent(expr) {
+  // "7d" / "4w" / "1m" / "30" → 返回 cutoff 的 ISO 时间戳
+  const m = /^(\d+)\s*([dwm]?)$/i.exec(String(expr || '').trim());
+  if (!m) throw new Error(`bad --recent value: ${expr} (use e.g. 7d, 4w, 1m)`);
+  const n = Number(m[1]);
+  const unit = (m[2] || 'd').toLowerCase();
+  const days = unit === 'm' ? n * 30 : unit === 'w' ? n * 7 : n;
+  return new Date(Date.now() - days * 86400_000).toISOString();
+}
+
 function parseArgs(argv) {
-  const args = { full: false, limit: 0, since: null };
+  const args = { rescore: false, limit: 0, since: null };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
-    if (a === '--full') args.full = true;
+    if (a === '--rescore' || a === '--force' || a === '--full') args.rescore = true;
     else if (a === '--limit') args.limit = Number(argv[++i]);
     else if (a === '--since') args.since = argv[++i];
+    else if (a === '--recent') args.since = parseRecent(argv[++i]);
   }
   return args;
 }
@@ -165,12 +180,12 @@ async function main() {
   const stats = { total: files.length, ok: 0, cached: 0, skipped: 0, error: 0, cost: 0 };
   let processed = 0;
 
-  console.log(`[scan] candidates=${files.length} concurrency=${CONCURRENCY} full=${args.full}`);
+  console.log(`[scan] candidates=${files.length} concurrency=${CONCURRENCY} rescore=${args.rescore}`);
 
   await runPool(
     files,
     async (f) => {
-      const res = await processOne(f.path, indexMap, args.full);
+      const res = await processOne(f.path, indexMap, args.rescore);
       processed++;
       if (res.status === 'ok') {
         stats.ok++;
