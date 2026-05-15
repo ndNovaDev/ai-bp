@@ -32,11 +32,13 @@ function tryHeuristicScore(card) {
   const commits = (card.gitCommitsInWindow || []).length;
 
   // 规则 1:典型闲聊/单问单答 — 几乎肯定是低值
-  // 极少轮次 + 完全没动过代码 + git 窗口内零 commit。
+  // 关键护栏:`filesCount === 0 && !hasEditTool` — 任何文件改动(代码/文档/skill/
+  // command/dotfile/脚本)都会让会话绕过这条规则,交给 Haiku 评。"无 commit" 不是
+  // 单独的低值信号 — 写文档/skill/dotfile 这类合法产出本来就不进 git。
   if (turns <= 3 && !hasEditTool(card.tools) && filesCount === 0 && commits === 0) {
     return {
       score: 10,
-      summary: '短对话(≤3 轮),无文件编辑,git 窗口内无 commit。本地启发式判定为低值会话。',
+      summary: '短对话(≤3 轮),没有任何文件改动(代码/文档/配置/脚本都没动)。本地启发式判定为低值会话。',
       highlights: [],
       tags: ['chat'],
       cost: 0,
@@ -46,11 +48,11 @@ function tryHeuristicScore(card) {
 
   // 规则 2:工具用得很少且零产出
   // 区别于规则 1:可能轮次稍多但仍是聊天/查询型。
-  // 仍要求没碰过 Edit/Write — 调过编辑工具就给 Haiku 看,即便没产出。
+  // 同样要求没碰过 Edit/Write 且 filesCount === 0 — 任何文件改动都放行给 Haiku。
   if (totalTools < 5 && !hasEditTool(card.tools) && filesCount === 0 && commits === 0 && turns < 6) {
     return {
       score: 15,
-      summary: '少量工具调用(<5 次),零文件改动,git 窗口内无 commit。本地启发式判定为低值会话。',
+      summary: '少量工具调用(<5 次),没有任何文件改动(代码/文档/配置/脚本都没动),轮次也低。本地启发式判定为低值会话。',
       highlights: [],
       tags: ['chat'],
       cost: 0,

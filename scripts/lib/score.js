@@ -61,8 +61,14 @@ ${JSON.stringify(compact)}
 - 走完了 plan → 实现 → 验证流程,且产出代码/脚本/skill/hook 的 ≥ 70 分
 - 跨工具组合(MCP/Skill/Bash 协作)+10
 - 产出可分发的 plugin / 通用工具 +10
-- gitCommitsInWindowCount > 0 说明改动真的提交了(强证据,代码真落地)+15;
-  若 filesEditedCount > 0 但 gitCommitsInWindowCount = 0,改动很可能没固化,警惕`;
+- gitCommitsInWindowCount > 0 是"代码改动真的落地"的强证据 +15;
+- **但"无 commit ≠ 无价值"**:大量有价值的产出本来就不进 git,看 filesEditedSample 的扩展名和路径再判:
+  - 文档类(.md / .txt / .rst / wiki / 飞书 doc 草稿)— 零 commit 是常态,不扣分
+  - 配置类(.json / .yaml / .toml / dotfiles / Claude Code 的 skill / command / hook 文件,常在 ~/.claude/ 或 .claude-plugin/ 下)— 零 commit 是常态,不扣分
+  - 个人脚本 / 一次性自动化(在 ~/scripts、/tmp、用户 home 下的脚本)— 零 commit 是常态,不扣分
+  - 给别的工具用的 prompt / 模板 / agent 配置 — 零 commit 是常态,不扣分
+  - **只有**:文件位于 git 仓库的代码目录(.js / .ts / .py / .go / .rs / .java / .cpp 等代码扩展名) **且** gitCommitsInWindowCount = 0 → 这种才是"改动可能没固化"的警惕信号
+- 不要单凭"无 commit"扣分。判断产出价值,要先判断产出类型`;
 }
 
 const SCORE_SCHEMA = {
