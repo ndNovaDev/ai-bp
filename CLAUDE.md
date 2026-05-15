@@ -88,8 +88,16 @@ Key design points to preserve when modifying:
   and `lib/draft.js` for the `spawn('claude', [...])` pattern. Both use
   `--bare --no-session-persistence` so the scorer's own sessions don't get re-indexed.
 - **mtime cache** in `scan.js` / `scan-session.js`: a row is skipped when
-  `existing.jsonlMtime === card.jsonlMtime`. Don't break this; full re-scoring 340
-  sessions costs ~$10.
+  `existing.jsonlMtime === card.jsonlMtime`. Don't break this — full re-scoring
+  the author's local 346-session corpus cost ~$10, and the cache is the only
+  thing keeping daily runs free.
+- **Preflight calibration**: `scan.js --count-only` returns
+  `{candidates, alreadyScored, newToScore, concurrency, indexSize}` as JSON for
+  the slash command's preflight. The slash command then runs `--limit 10` as a
+  calibration batch, reads the `[scan] done` summary line's `avg_cost` /
+  `avg_sec` to extrapolate the remainder, and asks the user via
+  `AskUserQuestion` before the full run. The 10 calibration items get mtime-
+  cached so the second run doesn't double-charge.
 - **Stub filter**: `claude -p --no-session-persistence` still writes a ~120-byte
   ai-title stub into `~/.claude/projects/`. `scan.js` drops anything under 500B
   (`STUB_SIZE_THRESHOLD`) before paying parse cost.

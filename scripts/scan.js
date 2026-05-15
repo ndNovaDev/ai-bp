@@ -40,15 +40,34 @@ function parseRecent(expr) {
 }
 
 function parseArgs(argv) {
-  const args = { rescore: false, limit: 0, since: null };
+  const args = { rescore: false, limit: 0, since: null, countOnly: false };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--rescore' || a === '--force' || a === '--full') args.rescore = true;
     else if (a === '--limit') args.limit = Number(argv[++i]);
     else if (a === '--since') args.since = argv[++i];
     else if (a === '--recent') args.since = parseRecent(argv[++i]);
+    else if (a === '--count-only') args.countOnly = true;
   }
   return args;
+}
+
+// 把候选 + 已索引 → 拆出 newToScore / alreadyScored / unknown(没记录 jsonlPath 的旧索引)
+function classifyCandidates(files, indexMap) {
+  // 按 jsonlPath 建反向索引
+  const byPath = new Map();
+  for (const row of indexMap.values()) {
+    if (row.jsonlPath) byPath.set(row.jsonlPath, row);
+  }
+  let alreadyScored = 0;
+  let newToScore = 0;
+  for (const f of files) {
+    const row = byPath.get(f.path);
+    // 索引里有该路径,且 mtime 一致 → 命中缓存,不会重花钱
+    if (row && Math.floor(f.mtimeMs / 1000) === row.jsonlMtime) alreadyScored++;
+    else newToScore++;
+  }
+  return { alreadyScored, newToScore };
 }
 
 function log(msg) {
@@ -184,6 +203,21 @@ async function main() {
   if (args.limit > 0) files = files.slice(0, args.limit);
 
   const indexMap = loadIndex();
+
+  if (args.countOnly) {
+    // 干跑:只数候选,不打分。slash command 用这个做 preflight 估算。
+    const { alreadyScored, newToScore } = classifyCandidates(files, indexMap);
+    process.stdout.write(JSON.stringify({
+      candidates: files.length,
+      alreadyScored,
+      newToScore,
+      concurrency: CONCURRENCY,
+      indexSize: indexMap.size,
+    }));
+    return;
+  }
+
+  const startedAt = Date.now();
   const writeEvery = 5;
   const stats = { total: files.length, ok: 0, cached: 0, skipped: 0, error: 0, cost: 0 };
   let processed = 0;
@@ -215,8 +249,16 @@ async function main() {
   );
 
   writeIndex(indexMap);
-  console.log(`[scan] done total=${stats.total} ok=${stats.ok} cached=${stats.cached} skipped=${stats.skipped} error=${stats.error} cost=$${stats.cost.toFixed(2)}`);
+  const elapsedSec = (Date.now() - startedAt) / 1000;
+  const avgCost = stats.ok > 0 ? stats.cost / stats.ok : 0;
+  const avgSec = stats.ok > 0 ? elapsedSec / stats.ok : 0;
+  console.log(
+    `[scan] done total=${stats.total} ok=${stats.ok} cached=${stats.cached} skipped=${stats.skipped} error=${stats.error} ` +
+    `cost=$${stats.cost.toFixed(2)} elapsed_sec=${elapsedSec.toFixed(1)} avg_cost=$${avgCost.toFixed(4)} avg_sec=${avgSec.toFixed(2)}`
+  );
 }
+
+module.exports = { parseArgs, classifyCandidates, listJsonlFiles };
 
 if (require.main === module) {
   main().catch((err) => {
