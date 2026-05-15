@@ -1,0 +1,8 @@
+# 本地数据 / 产出,含工作内容摘要,不入版本库
+data/
+weekly/
+
+# 日志 / 缓存
+*.log
+node_modules/
+.DS_Store
