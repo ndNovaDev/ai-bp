@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
   "name": "ai-bp",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "description": "AI 最佳实践案例库:扫描 Claude Code 历史会话,自动评分并生成中文 OKR 周报草稿。",
   "owner": {
     "name": "ndNovaDev"
@@ -10,7 +10,7 @@
     {
       "name": "ai-best-practice",
       "description": "扫描 Claude Code 历史会话,挖掘 AI 最佳实践案例,自动评分并生成中文 OKR 周报草稿。",
-      "version": "0.1.15",
+      "version": "0.1.16",
       "source": "./",
       "category": "productivity"
     }

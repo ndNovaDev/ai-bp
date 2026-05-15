@@ -93,13 +93,14 @@ claude --plugin-dir /path/to/ai-bp
 
 ### 日常无感:hook 自动入库
 
-什么都不用做。每次正常退出 Claude Code 会话(Ctrl+D / 关窗 / `/clear` / `/logout`),
+什么都不用做。每次正常退出 Claude Code 会话(Ctrl+D / `/clear` / `/logout`),
 SessionEnd hook 后台异步打分并写入 `~/.ai-best-practice/data/index.jsonl`。
 日志在 `~/.ai-best-practice/logs/ai-best-practice.log`。
 
-⚠️ 已知坑:`/exit` 斜杠命令退出**不**触发 SessionEnd
-([Claude Code issue #35892](https://github.com/anthropics/claude-code/issues/35892)),
-这种漏网用 `/ai-practice-scan` 兜底扫一次(mtime cache 命中,基本不花钱)。
+⚠️ hook 不可靠:`/exit` 斜杠退出([Claude Code issue #35892](https://github.com/anthropics/claude-code/issues/35892))、
+点 X 关窗、Cmd+Q、强杀进程都会漏触发 SessionEnd。**但你不用管** — `/ai-practice-pick`
+启动时会自动 scan 最近 14 天兜底,漏网会自动捡回来(mtime cache 命中已索引的全跳过,基本不花钱)。
+想强制全量重扫超过 14 天的旧 session,手动跑 `/ai-practice-scan`。
 
 ### 写本周作文
 

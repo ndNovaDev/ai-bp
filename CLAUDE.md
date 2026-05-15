@@ -124,10 +124,14 @@ Key design points to preserve when modifying:
   `nohup node scan-session.js` and always `exit 0`. Failures only go to the log;
   never block session shutdown. The hook is wired to **SessionEnd** (fires once
   per session) rather than **Stop** (would fire after every assistant turn —
-  burns Haiku $ on long sessions). Trade-off: `/exit` slash-command exits do not
-  trigger SessionEnd (Claude Code issue #35892); rely on `/ai-practice-scan` as
-  the periodic fallback to catch missed sessions via filesystem walk + mtime
-  cache. Don't switch back to `Stop` without restoring an aggressive debounce.
+  burns Haiku $ on long sessions). Don't switch back to `Stop` without restoring
+  an aggressive debounce.
+- **Hook unreliability is handled by auto-scan-on-pick**: SessionEnd misses
+  `/exit` (Claude Code issue #35892), close-window (SIGHUP), Cmd+Q, kill — so
+  `/ai-practice-pick` runs `scripts/scan.js --recent 14d` as step 0.5 before
+  doing anything else. mtime cache means already-indexed sessions skip cheaply.
+  The user never has to remember `/ai-practice-scan` — it stays as the manual
+  "rescan beyond 14d" escape hatch.
 - **Slash commands take natural-language args**. `commands/ai-practice-{scan,pick}.md`
   contain mapping tables (Chinese phrase → CLI flag). Claude itself does the
   translation in-conversation; the scripts only see flags like `--recent 7d`.

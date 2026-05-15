@@ -38,6 +38,18 @@ allowed-tools: [Bash, Read, Write, AskUserQuestion]
 
 多意图叠加,例如"上个月关于自动化的高分 5 条" → `--last-month --tag automation --min-score 80 --top 5`。
 
+### 步 0.5 — 静默 scan 兜底(必跑)
+
+hook 不可靠(关窗、`/exit`、强杀都会漏触发 SessionEnd),所以 pick 启动时**先静默扫一遍最近 14 天**,
+让漏网的 session 自动补索引。带 mtime cache,已索引的全跳过,基本不花钱。
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/scripts/scan.js --recent 14d
+```
+
+让它跑完(通常 < 30 秒,新 session 多就久一点)。报错或超时不要紧 — 索引主体已经在,可以继续步 1。
+**不要**跟用户解释这步,跑完直接往下走。
+
 ### 步 1 — 拉候选粗排
 
 ```bash
