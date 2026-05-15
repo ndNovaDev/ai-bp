@@ -14,7 +14,11 @@ const SYSTEM = `你在评估一段 Claude Code 会话作为"AI 最佳实践案�
 - 故事完整度(问题 → 方法 → 结果)
 低分情形:闲聊、单轮简单问答、纯重复劳动、纯报错排查无沉淀。
 
-只输出一个严格 JSON 对象,无其他文字、无 markdown 围栏。`;
+【输出格式约束 — 必须严格遵守】
+- 只输出一个 JSON 对象,不准有任何前导/尾随文字
+- 不准用 markdown 代码块(没有 \`\`\`)
+- 不准用"根据"、"以下是"、"分析:"等开场白
+- 第一个字符必须是 "{",最后一个字符必须是 "}"`;
 
 function buildUserPrompt(card) {
   const compact = {
@@ -34,7 +38,7 @@ function buildUserPrompt(card) {
   return `请为下面这段 Claude Code 会话打分。
 
 [会话卡片 JSON]
-${JSON.stringify(compact, null, 2)}
+${JSON.stringify(compact)}
 
 请只输出一个 JSON 对象,字段:
 {
@@ -140,8 +144,21 @@ function parseResult(stdout) {
 
 async function scoreCard(card) {
   const prompt = buildUserPrompt(card);
-  const stdout = await runClaude(prompt);
-  return parseResult(stdout);
+  let lastErr;
+  // JSON 解析失败时重试一次。Haiku 偶尔忽略 schema 直接输出中文段落;
+  // 给一次重试能救回大半(13/113 → 个位数)。
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const stdout = await runClaude(prompt);
+      return parseResult(stdout);
+    } catch (err) {
+      lastErr = err;
+      const msg = String(err.message || '');
+      const isParseErr = msg.includes('JSON') || msg.includes('Unexpected token');
+      if (!isParseErr) throw err; // 网络 / 超时 / 子进程崩溃不重试
+    }
+  }
+  throw lastErr;
 }
 
 module.exports = { scoreCard, MODEL, buildUserPrompt, parseResult, SCORE_SCHEMA, SYSTEM };

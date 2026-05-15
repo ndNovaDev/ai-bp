@@ -21,7 +21,9 @@ const PROJECTS_ROOT = path.join(process.env.HOME, '.claude/projects');
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const INDEX_PATH = path.join(PLUGIN_ROOT, 'data/index.jsonl');
 const LOG_PATH = path.join(process.env.HOME, '.claude/logs/ai-best-practice.log');
-const CONCURRENCY = Number(process.env.AIBP_CONCURRENCY || 4);
+// 走 `claude -p` 子进程,每个并发约占 200-500MB 内存。8 在现代 mac 上稳。
+// 想再快 / 再省可改 AIBP_CONCURRENCY。
+const CONCURRENCY = Number(process.env.AIBP_CONCURRENCY || 8);
 
 // 不限 cwd 范围:全部会话都纳入候选,由 Haiku 评分自己淘汰低含金量。
 // 如果以后要排除某些目录,在这里加 EXCLUDE_PREFIXES。
@@ -54,6 +56,11 @@ function log(msg) {
   fs.appendFileSync(LOG_PATH, `[${new Date().toISOString()}] ${msg}\n`);
 }
 
+// `claude -p --no-session-persistence` 仍会在 projects/ 下写一个 1 行 ai-title
+// stub(~120 字节)。早过滤,避免下游 parse-jsonl 浪费 IO 又被 turns<2 排除。
+// 真实 session 至少 2 轮对话,远超 1KB,所以 < 500 字节一定是元数据 stub。
+const STUB_SIZE_THRESHOLD = 500;
+
 function listJsonlFiles() {
   if (!fs.existsSync(PROJECTS_ROOT)) return [];
   const dirs = fs.readdirSync(PROJECTS_ROOT, { withFileTypes: true });
@@ -65,6 +72,7 @@ function listJsonlFiles() {
       if (!f.endsWith('.jsonl')) continue;
       const full = path.join(dir, f);
       const stat = fs.statSync(full);
+      if (stat.size < STUB_SIZE_THRESHOLD) continue;
       files.push({ path: full, mtimeMs: stat.mtimeMs });
     }
   }
