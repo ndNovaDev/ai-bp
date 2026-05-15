@@ -1,7 +1,7 @@
 ---
 description: "扫描 Claude Code 历史会话,调 Haiku 评分入库。默认全量带缓存,接受自然语言参数。"
 argument-hint: "可选自然语言,如:本周 / 最近 7 天 / 重新评分 / 不限"
-allowed-tools: [Bash, AskUserQuestion]
+allowed-tools: [Bash, AskUserQuestion, TaskOutput]
 ---
 
 # ai-practice-scan
@@ -89,19 +89,34 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/scan.js --limit 10 $FLAGS
 
 若步 2 跳过了标定(`newToScore < 10`),直接 AskUserQuestion 用粗估的数字问就行。
 
-### 步 5 — 全量跑
+### 步 5 — 全量跑(后台 + 轮询,**关键**)
 
-用户选继续就跑:
-```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/scan.js $FLAGS
-```
+普通 Bash 调用是阻塞的:你跑 scan.js 期间用户什么也看不到,要等到几十分钟后整个命令
+返回才知道发生了什么。所以**必须**用后台跑 + 轮询:
+
+1. **后台启动**:`Bash(command: "node ${CLAUDE_PLUGIN_ROOT}/scripts/scan.js $FLAGS", run_in_background: true)`
+   立刻拿到 `task_id` 返回,不会卡死。
+
+2. **轮询循环**(直到任务结束):
+   - 调 `TaskOutput(task_id, block: true, timeout: 30000)`,最多等 30 秒
+     (block 模式下,有新输出或任务完成就提前返回;脚本每 10s 会打一行 heartbeat)
+   - 从返回里抓**最新的** `[scan] heartbeat ...` 行(可能也有 `[scan] done` 表示结束)
+   - 翻成一行简短的中文进度发给用户,例如:
+     `进度 25/198(ok 24 / cached 0 / error 1 / 重试 1)| 已花 $0.42 | 剩余约 4.2m`
+   - 若返回里出现 `[scan] done ...`,跳出循环
+   - 否则继续下一轮
+
+3. **不要轮询太快**也**不要把 stdout 全文回显给用户**。每轮就发一行总结。
 
 步 3 已经入库的 10 条会命中 mtime 缓存自动跳过,不会重花钱。
 
-### 步 6 — 报告
+### 步 6 — 终态报告
 
-汇总:扫描总数、新增、缓存命中、跳过、错误、累计 cost、墙钟时间、`index.jsonl` 现在多少条。
-失败日志在 `~/.claude/logs/ai-best-practice.log`。
+`[scan] done` 行包含所有最终字段。汇总给用户:
+- 扫描总数 / ok / cached / skipped / error / 重试次数(若有)
+- 累计 cost、墙钟时间
+- `index.jsonl` 当前条数(可以用 `wc -l` 查一下)
+- 失败日志:`~/.claude/logs/ai-best-practice.log`(若有 error,提醒用户去看)
 
 ## 内部脚本支持的 flag(供你拼接,不要直接暴露给用户)
 

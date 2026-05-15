@@ -145,12 +145,14 @@ async function processOne(jsonlPath, indexMap, force) {
   }
 
   let scored;
+  let attemptsUsed = 1;
   try {
-    scored = await scoreCard(card);
+    scored = await scoreCard(card, { onAttempt: (n) => { attemptsUsed = n; } });
   } catch (err) {
     log(`score failed ${jsonlPath}: ${err.message}`);
-    return { status: 'error', reason: 'score' };
+    return { status: 'error', reason: 'score', attemptsUsed };
   }
+  if (attemptsUsed > 1) log(`retried ok sessionId=${card.sessionId} attempts=${attemptsUsed}`);
 
   const row = {
     sessionId: card.sessionId,
@@ -174,7 +176,7 @@ async function processOne(jsonlPath, indexMap, force) {
     scoredAt: new Date().toISOString(),
   };
   indexMap.set(card.sessionId, row);
-  return { status: 'ok', score: scored.score, cost: scored.cost };
+  return { status: 'ok', score: scored.score, cost: scored.cost, attemptsUsed };
 }
 
 async function runPool(items, worker, concurrency) {
@@ -219,10 +221,36 @@ async function main() {
 
   const startedAt = Date.now();
   const writeEvery = 5;
-  const stats = { total: files.length, ok: 0, cached: 0, skipped: 0, error: 0, cost: 0 };
+  const stats = { total: files.length, ok: 0, cached: 0, skipped: 0, error: 0, cost: 0, retried: 0 };
   let processed = 0;
 
   console.log(`[scan] candidates=${files.length} concurrency=${CONCURRENCY} rescore=${args.rescore}`);
+
+  // 每 10 秒打一次心跳,给前台跑 scan 的人一个进度信号。
+  // 没有进度更新就不打(避免空转刷屏)。
+  let lastHeartbeatProcessed = -1;
+  const heartbeat = setInterval(() => {
+    if (processed === lastHeartbeatProcessed) return;
+    lastHeartbeatProcessed = processed;
+    const elapsed = (Date.now() - startedAt) / 1000;
+    const remaining = stats.total - processed;
+    // ETA:基于至今平均速度。处理了 0 条就还不知道。
+    let eta = '?';
+    if (processed > 0 && remaining > 0) {
+      const secPerItem = elapsed / processed;
+      const etaSec = remaining * secPerItem;
+      eta = etaSec >= 60 ? `${(etaSec / 60).toFixed(1)}m` : `${etaSec.toFixed(0)}s`;
+    } else if (remaining === 0) {
+      eta = '0s';
+    }
+    console.log(
+      `[scan] heartbeat elapsed=${elapsed.toFixed(0)}s | ${processed}/${stats.total} ` +
+      `(ok=${stats.ok} cached=${stats.cached} skipped=${stats.skipped} error=${stats.error}` +
+      (stats.retried > 0 ? ` retried=${stats.retried}` : '') +
+      `) | cost=$${stats.cost.toFixed(2)} | ETA=${eta}`
+    );
+  }, 10_000);
+  heartbeat.unref?.(); // 让进程能正常退出
 
   await runPool(
     files,
@@ -232,7 +260,9 @@ async function main() {
       if (res.status === 'ok') {
         stats.ok++;
         stats.cost += res.cost || 0;
-        console.log(`[${processed}/${stats.total}] ok score=${res.score} cost=$${(res.cost||0).toFixed(4)} ${f.path.split('/').pop()}`);
+        if (res.attemptsUsed > 1) stats.retried++;
+        const retryTag = res.attemptsUsed > 1 ? ` retries=${res.attemptsUsed - 1}` : '';
+        console.log(`[${processed}/${stats.total}] ok score=${res.score} cost=$${(res.cost||0).toFixed(4)}${retryTag} ${f.path.split('/').pop()}`);
       } else if (res.status === 'cached') {
         stats.cached++;
       } else if (res.status === 'skipped') {
@@ -248,13 +278,15 @@ async function main() {
     CONCURRENCY,
   );
 
+  clearInterval(heartbeat);
   writeIndex(indexMap);
   const elapsedSec = (Date.now() - startedAt) / 1000;
   const avgCost = stats.ok > 0 ? stats.cost / stats.ok : 0;
   const avgSec = stats.ok > 0 ? elapsedSec / stats.ok : 0;
   console.log(
-    `[scan] done total=${stats.total} ok=${stats.ok} cached=${stats.cached} skipped=${stats.skipped} error=${stats.error} ` +
-    `cost=$${stats.cost.toFixed(2)} elapsed_sec=${elapsedSec.toFixed(1)} avg_cost=$${avgCost.toFixed(4)} avg_sec=${avgSec.toFixed(2)}`
+    `[scan] done total=${stats.total} ok=${stats.ok} cached=${stats.cached} skipped=${stats.skipped} error=${stats.error}` +
+    (stats.retried > 0 ? ` retried=${stats.retried}` : '') +
+    ` cost=$${stats.cost.toFixed(2)} elapsed_sec=${elapsedSec.toFixed(1)} avg_cost=$${avgCost.toFixed(4)} avg_sec=${avgSec.toFixed(2)}`
   );
 }
 
