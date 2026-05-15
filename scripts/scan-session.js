@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const { buildSessionCard } = require('./lib/parse-jsonl');
 const { scoreCard } = require('./lib/score');
+const { tryHeuristicScore } = require('./lib/heuristic');
 const { INDEX_PATH, LOG_PATH } = require('./lib/paths');
 
 const EXCLUDE_PREFIXES = [];
@@ -60,7 +61,9 @@ async function main() {
     return log(`cached ${card.sessionId}`);
   }
 
-  const scored = await scoreCard(card);
+  // 先走启发式预筛,显然低值的会话不调用 Haiku。详见 lib/heuristic.js。
+  const heuristic = tryHeuristicScore(card);
+  const scored = heuristic || (await scoreCard(card));
   indexMap.set(card.sessionId, {
     sessionId: card.sessionId,
     cwd: card.cwd,
@@ -72,6 +75,7 @@ async function main() {
     skills: card.skills,
     mcpServers: card.mcpServers,
     filesEdited: card.filesEdited,
+    gitCommitsInWindow: card.gitCommitsInWindow || [],
     jsonlPath: card.jsonlPath,
     jsonlMtime: card.jsonlMtime,
     model: scored.model,
@@ -83,7 +87,8 @@ async function main() {
     scoredAt: new Date().toISOString(),
   });
   writeIndex(indexMap);
-  log(`indexed ${card.sessionId} score=${scored.score} cost=$${(scored.cost||0).toFixed(4)}`);
+  const tag = heuristic ? 'heuristic' : 'haiku';
+  log(`indexed ${card.sessionId} via=${tag} score=${scored.score} cost=$${(scored.cost||0).toFixed(4)}`);
 }
 
 main().catch((err) => {

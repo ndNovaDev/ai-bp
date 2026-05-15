@@ -26,6 +26,7 @@ const SYSTEM = `你在评估一段 Claude Code 会话作为"AI 最佳实践案�
 - 第一个字符必须是 "{",最后一个字符必须是 "}"`;
 
 function buildUserPrompt(card) {
+  const commits = card.gitCommitsInWindow || [];
   const compact = {
     cwd: card.cwd,
     startedAt: card.startedAt,
@@ -38,6 +39,8 @@ function buildUserPrompt(card) {
     mcpServers: card.mcpServers,
     filesEditedCount: (card.filesEdited || []).length,
     filesEditedSample: (card.filesEdited || []).slice(0, 8),
+    gitCommitsInWindowCount: commits.length,
+    gitCommitsInWindowSample: commits.slice(0, 10),
     keyTurns: card.keyTurns,
   };
   return `请为下面这段 Claude Code 会话打分。
@@ -57,7 +60,9 @@ ${JSON.stringify(compact)}
 - 闲聊/打招呼/单轮问答 ≤ 30 分
 - 走完了 plan → 实现 → 验证流程,且产出代码/脚本/skill/hook 的 ≥ 70 分
 - 跨工具组合(MCP/Skill/Bash 协作)+10
-- 产出可分发的 plugin / 通用工具 +10`;
+- 产出可分发的 plugin / 通用工具 +10
+- gitCommitsInWindowCount > 0 说明改动真的提交了(强证据,代码真落地)+15;
+  若 filesEditedCount > 0 但 gitCommitsInWindowCount = 0,改动很可能没固化,警惕`;
 }
 
 const SCORE_SCHEMA = {

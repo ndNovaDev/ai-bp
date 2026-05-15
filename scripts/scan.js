@@ -17,6 +17,7 @@ const fs = require('fs');
 const path = require('path');
 const { buildSessionCard } = require('./lib/parse-jsonl');
 const { scoreCard } = require('./lib/score');
+const { tryHeuristicScore } = require('./lib/heuristic');
 const { INDEX_PATH, LOG_PATH } = require('./lib/paths');
 
 const PROJECTS_ROOT = path.join(process.env.HOME, '.claude/projects');
@@ -143,15 +144,25 @@ async function processOne(jsonlPath, indexMap, force) {
     return { status: 'cached' };
   }
 
+  // 启发式预筛:显然低值的会话本地直接打低分,省一次 Haiku 调用。
+  // 触发条件见 lib/heuristic.js。
   let scored;
-  let attemptsUsed = 1;
-  try {
-    scored = await scoreCard(card, { onAttempt: (n) => { attemptsUsed = n; } });
-  } catch (err) {
-    log(`score failed ${jsonlPath}: ${err.message}`);
-    return { status: 'error', reason: 'score', attemptsUsed };
+  let attemptsUsed = 0;
+  let viaHeuristic = false;
+  const h = tryHeuristicScore(card);
+  if (h) {
+    scored = h;
+    viaHeuristic = true;
+  } else {
+    attemptsUsed = 1;
+    try {
+      scored = await scoreCard(card, { onAttempt: (n) => { attemptsUsed = n; } });
+    } catch (err) {
+      log(`score failed ${jsonlPath}: ${err.message}`);
+      return { status: 'error', reason: 'score', attemptsUsed };
+    }
+    if (attemptsUsed > 1) log(`retried ok sessionId=${card.sessionId} attempts=${attemptsUsed}`);
   }
-  if (attemptsUsed > 1) log(`retried ok sessionId=${card.sessionId} attempts=${attemptsUsed}`);
 
   const row = {
     sessionId: card.sessionId,
@@ -164,6 +175,7 @@ async function processOne(jsonlPath, indexMap, force) {
     skills: card.skills,
     mcpServers: card.mcpServers,
     filesEdited: card.filesEdited,
+    gitCommitsInWindow: card.gitCommitsInWindow || [],
     jsonlPath: card.jsonlPath,
     jsonlMtime: card.jsonlMtime,
     model: scored.model,
@@ -175,7 +187,12 @@ async function processOne(jsonlPath, indexMap, force) {
     scoredAt: new Date().toISOString(),
   };
   indexMap.set(card.sessionId, row);
-  return { status: 'ok', score: scored.score, cost: scored.cost, attemptsUsed };
+  return {
+    status: viaHeuristic ? 'heuristic' : 'ok',
+    score: scored.score,
+    cost: scored.cost,
+    attemptsUsed,
+  };
 }
 
 async function runPool(items, worker, concurrency) {
@@ -220,7 +237,7 @@ async function main() {
 
   const startedAt = Date.now();
   const writeEvery = 5;
-  const stats = { total: files.length, ok: 0, cached: 0, skipped: 0, error: 0, cost: 0, retried: 0 };
+  const stats = { total: files.length, ok: 0, cached: 0, skipped: 0, error: 0, heuristic: 0, cost: 0, retried: 0 };
   let processed = 0;
 
   console.log(`[scan] candidates=${files.length} concurrency=${CONCURRENCY} rescore=${args.rescore}`);
@@ -244,7 +261,7 @@ async function main() {
     }
     console.log(
       `[scan] heartbeat elapsed=${elapsed.toFixed(0)}s | ${processed}/${stats.total} ` +
-      `(ok=${stats.ok} cached=${stats.cached} skipped=${stats.skipped} error=${stats.error}` +
+      `(ok=${stats.ok} heur=${stats.heuristic} cached=${stats.cached} skipped=${stats.skipped} error=${stats.error}` +
       (stats.retried > 0 ? ` retried=${stats.retried}` : '') +
       `) | cost=$${stats.cost.toFixed(2)} | ETA=${eta}`
     );
@@ -262,6 +279,9 @@ async function main() {
         if (res.attemptsUsed > 1) stats.retried++;
         const retryTag = res.attemptsUsed > 1 ? ` retries=${res.attemptsUsed - 1}` : '';
         console.log(`[${processed}/${stats.total}] ok score=${res.score} cost=$${(res.cost||0).toFixed(4)}${retryTag} ${f.path.split('/').pop()}`);
+      } else if (res.status === 'heuristic') {
+        stats.heuristic++;
+        console.log(`[${processed}/${stats.total}] heur score=${res.score} cost=$0 ${f.path.split('/').pop()}`);
       } else if (res.status === 'cached') {
         stats.cached++;
       } else if (res.status === 'skipped') {
@@ -270,7 +290,8 @@ async function main() {
         stats.error++;
         console.log(`[${processed}/${stats.total}] error ${res.reason} ${f.path.split('/').pop()}`);
       }
-      if (stats.ok % writeEvery === 0 && res.status === 'ok') {
+      // 每 5 条"实打到索引"就持久化一次。heuristic 也算进去 — 否则它们直到 done 才落盘。
+      if ((stats.ok + stats.heuristic) % writeEvery === 0 && (res.status === 'ok' || res.status === 'heuristic')) {
         writeIndex(indexMap);
       }
     },
@@ -283,7 +304,7 @@ async function main() {
   const avgCost = stats.ok > 0 ? stats.cost / stats.ok : 0;
   const avgSec = stats.ok > 0 ? elapsedSec / stats.ok : 0;
   console.log(
-    `[scan] done total=${stats.total} ok=${stats.ok} cached=${stats.cached} skipped=${stats.skipped} error=${stats.error}` +
+    `[scan] done total=${stats.total} ok=${stats.ok} heuristic=${stats.heuristic} cached=${stats.cached} skipped=${stats.skipped} error=${stats.error}` +
     (stats.retried > 0 ? ` retried=${stats.retried}` : '') +
     ` cost=$${stats.cost.toFixed(2)} elapsed_sec=${elapsedSec.toFixed(1)} avg_cost=$${avgCost.toFixed(4)} avg_sec=${avgSec.toFixed(2)}`
   );

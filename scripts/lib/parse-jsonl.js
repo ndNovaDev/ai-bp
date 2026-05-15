@@ -2,7 +2,11 @@
 // 卡片目标 ≤ ~2K token,只保留判断含金量需要的信息。
 
 const fs = require('fs');
+const path = require('path');
 const readline = require('readline');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
+const execFileAsync = promisify(execFile);
 
 const KEY_TURN_MIN_USER_CHARS = 80;
 const KEY_TURN_MIN_TOOLS = 3;
@@ -30,6 +34,29 @@ function toolUsesOfContent(content) {
 function clip(s, n) {
   if (!s) return '';
   return s.length > n ? s.slice(0, n) + '…' : s;
+}
+
+// 在 session 的时间窗口内,对 cwd 跑 git log,拿到这段会话期间产生的 commit。
+// 这是"AI 产出真的落地了"的最强证据,比 filesEdited 计数靠谱得多。
+// best-effort:cwd 不是 git 仓库 / git 不可用 / 超时,一律返回 [],不抛错。
+async function gitCommitsInWindow(cwd, startedAt, endedAt) {
+  if (!cwd || !startedAt) return [];
+  try {
+    if (!fs.existsSync(path.join(cwd, '.git'))) return [];
+  } catch {
+    return [];
+  }
+  const until = endedAt || new Date().toISOString();
+  try {
+    const { stdout } = await execFileAsync(
+      'git',
+      ['-C', cwd, 'log', '--oneline', `--since=${startedAt}`, `--until=${until}`, '-n', '20'],
+      { encoding: 'utf8', timeout: 3000, maxBuffer: 256 * 1024 },
+    );
+    return stdout.trim().split('\n').filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 
 async function buildSessionCard(jsonlPath) {
@@ -131,6 +158,8 @@ async function buildSessionCard(jsonlPath) {
     };
   });
 
+  const commits = await gitCommitsInWindow(cwd, startedAt, endedAt);
+
   return {
     sessionId,
     cwd,
@@ -143,13 +172,14 @@ async function buildSessionCard(jsonlPath) {
     skills: [...skills],
     mcpServers: [...mcpServers],
     filesEdited: [...filesEdited].slice(0, 20),
+    gitCommitsInWindow: commits,
     keyTurns,
     jsonlPath,
     jsonlMtime: Math.floor(stat.mtimeMs / 1000),
   };
 }
 
-module.exports = { buildSessionCard };
+module.exports = { buildSessionCard, gitCommitsInWindow };
 
 if (require.main === module) {
   const path = process.argv[2];

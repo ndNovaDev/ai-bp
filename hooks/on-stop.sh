@@ -6,7 +6,10 @@
 
 set -euo pipefail
 
-LOG="$HOME/.claude/logs/ai-best-practice.log"
+# 跟 scripts/lib/paths.js 对齐:日志一律落在 ~/.ai-best-practice/ 下,
+# 别写进 ~/.claude/(那目录由 claude CLI 用 com.apple.provenance 锁了团队,
+# node 跨团队写会反复触发 macOS App 管理弹框)。AIBP_DATA_DIR 可覆盖根目录。
+LOG="${AIBP_DATA_DIR:-$HOME/.ai-best-practice}/logs/ai-best-practice.log"
 mkdir -p "$(dirname "$LOG")"
 
 # 从 stdin 读 JSON

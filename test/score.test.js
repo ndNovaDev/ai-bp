@@ -61,6 +61,28 @@ test('buildUserPrompt: filesEditedSample 截断到 8 条', () => {
   assert.equal(compact.filesEditedSample[0], '/path/file0.ts');
 });
 
+test('buildUserPrompt: 嵌入 gitCommitsInWindow 字段(强证据)', () => {
+  const cardWithCommits = {
+    ...sampleCard,
+    gitCommitsInWindow: ['abc123 add hook', 'def456 fix bug'],
+  };
+  const prompt = buildUserPrompt(cardWithCommits);
+  const m = prompt.match(/\[会话卡片 JSON\]\n([\s\S]+?)\n\n请只输出/);
+  const compact = JSON.parse(m[1]);
+  assert.equal(compact.gitCommitsInWindowCount, 2);
+  assert.deepEqual(compact.gitCommitsInWindowSample, ['abc123 add hook', 'def456 fix bug']);
+  // SYSTEM 之外的 user prompt 里也要明确告诉模型这个字段的权重
+  assert.match(prompt, /gitCommitsInWindowCount/);
+});
+
+test('buildUserPrompt: card 缺 gitCommitsInWindow 时降级为 0(向后兼容老索引)', () => {
+  const prompt = buildUserPrompt(sampleCard);
+  const m = prompt.match(/\[会话卡片 JSON\]\n([\s\S]+?)\n\n请只输出/);
+  const compact = JSON.parse(m[1]);
+  assert.equal(compact.gitCommitsInWindowCount, 0);
+  assert.deepEqual(compact.gitCommitsInWindowSample, []);
+});
+
 test('buildUserPrompt: 包含输出格式指令', () => {
   const prompt = buildUserPrompt(sampleCard);
   assert.match(prompt, /请只输出一个 JSON 对象/);

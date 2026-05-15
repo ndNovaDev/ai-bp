@@ -1,7 +1,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { buildSessionCard } = require('../scripts/lib/parse-jsonl');
+const fs = require('node:fs');
+const os = require('node:os');
+const { execFileSync } = require('node:child_process');
+const { buildSessionCard, gitCommitsInWindow } = require('../scripts/lib/parse-jsonl');
 
 const FIXTURES = path.join(__dirname, 'fixtures');
 
@@ -84,6 +87,47 @@ test('buildSessionCard: malformed lines are skipped, not fatal', async () => {
   assert.equal(card.cwd, '/Users/lqy/proj-c');
   assert.equal(card.turns, 2, '两条有效 user text');
   assert.equal(card.firstPrompt, '测试malformed 行处理');
+});
+
+test('gitCommitsInWindow: 非 git cwd 返回 []', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aibp-nongit-'));
+  try {
+    const out = await gitCommitsInWindow(tmp, '2020-01-01T00:00:00Z', '2030-01-01T00:00:00Z');
+    assert.deepEqual(out, []);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test('gitCommitsInWindow: cwd 为空 / startedAt 缺失 返回 []', async () => {
+  assert.deepEqual(await gitCommitsInWindow('', '2020-01-01'), []);
+  assert.deepEqual(await gitCommitsInWindow('/tmp', ''), []);
+  assert.deepEqual(await gitCommitsInWindow(null, null), []);
+});
+
+test('gitCommitsInWindow: 窗口内 commit 能拿到,窗口外拿不到', async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'aibp-git-'));
+  try {
+    const sh = (args) =>
+      execFileSync('git', args, { cwd: tmp, stdio: ['ignore', 'pipe', 'pipe'] });
+    sh(['init', '-q', '-b', 'main']);
+    sh(['config', 'user.email', 't@t']);
+    sh(['config', 'user.name', 't']);
+    fs.writeFileSync(path.join(tmp, 'f'), 'a');
+    sh(['add', '.']);
+    sh(['commit', '-q', '-m', 'first commit message']);
+
+    // 窗口包含 commit:命中
+    const inWin = await gitCommitsInWindow(tmp, '2020-01-01T00:00:00Z', '2099-01-01T00:00:00Z');
+    assert.equal(inWin.length, 1);
+    assert.match(inWin[0], /first commit message/);
+
+    // 窗口在 commit 之前:miss
+    const before = await gitCommitsInWindow(tmp, '2020-01-01T00:00:00Z', '2020-06-01T00:00:00Z');
+    assert.deepEqual(before, []);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 test('buildSessionCard: long text in keyTurns is clipped to ~400 chars + ellipsis', async () => {

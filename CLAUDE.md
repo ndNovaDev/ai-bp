@@ -78,25 +78,31 @@ Stop hook → hooks/on-stop.sh → scripts/scan-session.js ─┐
                                                         │
 /ai-practice-scan → scripts/scan.js (batch + cache) ────┤→ lib/parse-jsonl → lib/score → INDEX_PATH
                                                         │
-/ai-practice-pick → scripts/list.js → lib/draft.js (proposeAndProbe → 采访 → finalize) → WEEKLY_DIR
+/ai-practice-pick → scripts/list.js → lib/draft.js (buildProbePrompt → 主对话起草 → 采访 → buildFinalizePrompt → 主对话起草 → Write) → WEEKLY_DIR
 ```
 
-**起草流程(`lib/draft.js`)是两阶段交互式的**,不是一次 LLM 大调用:
-1. `proposeAndProbe(evidencePack)` → STAR 初稿 + 3-5 道采访问题(LLM 看不出的事:动机、
-   真实 ROI、备选方案、复用面)
-2. slash command 在主对话里用 `AskUserQuestion` 逐题问用户;每题第一选项是 LLM 的最佳猜测,
-   用户直接选 = 静默接受
-3. `finalize({drafts, answers, hasMultipleCases})` → 终稿,内部跑 `BANNED_PHRASES` 后置
-   检测,命中则重写一次
-4. 整套起草服务一个假想敌:公司"AI 最佳实践审计 AI",见 `AUDITOR_LENS` 常量
-5. 单案例 H1 直接是案例名,无 H2;多案例 H1 是期号,每案 H2 是案例名
+**起草流程(`lib/draft.js`)是两阶段交互式的,且完全在主对话内进行**(不 spawn `claude -p`):
+1. `buildProbePrompt(evidencePack)` 返回**字符串**(已内嵌 AUDITOR_LENS + 证据包 + 形状要求)
+   → slash command 把字符串扔进主对话上下文 → 主 Claude 在下一条回复里产出 STAR 初稿 + 正好 4 道
+   采访题(S/T/A/R 各一,LLM 看不出的事:动机、真实 ROI、备选方案、复用面)
+2. slash command **一次** `AskUserQuestion`(API 的 questions 上限刚好 4)把 4 题一屏问完;
+   每题第一选项是 LLM 的最佳猜测,用户直接选 = 静默接受
+3. `buildFinalizePrompt({drafts, answers, hasMultipleCases})` 返回字符串 → 主 Claude 产出
+   markdown → slash command 用 `Write` 落盘
+4. 落盘后跑 `detectBanned(md)`,命中则把 `bannedHits` 传给 `buildFinalizePrompt`,
+   主 Claude 重写一次(只重写一次,继续命中就接受现状)
+5. 整套起草服务一个假想敌:公司"AI 最佳实践审计 AI",见 `AUDITOR_LENS` 常量
+6. 单案例 H1 直接是案例名,无 H2;多案例 H1 是期号,每案 H2 是案例名
 
 Key design points to preserve when modifying:
 
-- **All LLM calls shell out to `claude -p`**. We never import `@anthropic-ai/sdk`.
-  Auth is whatever the user already logged into Claude Code with. See `lib/score.js`
-  and `lib/draft.js` for the `spawn('claude', [...])` pattern. Both use
-  `--bare --no-session-persistence` so the scorer's own sessions don't get re-indexed.
+- **Scoring 走子进程,Drafting 不走**:`lib/score.js` `spawn('claude', [...])` 跑 Haiku
+  (`--bare --no-session-persistence` 防止 scorer 自己的会话被 hook 递归索引)。
+  `lib/draft.js` **不**起子进程 — 它只 export 字符串模板(`buildProbePrompt` /
+  `buildFinalizePrompt`)和 helper(`detectBanned` / `titleToSlug` / `extractTitle`),
+  slash command 把模板字符串作为指令喂给主对话 Claude,主 Claude 在自己上下文里产出 STAR / markdown。
+  好处:复用主会话的鉴权 + 1M context,不走 Anthropic 的"长上下文 Extra Usage"计费档(否则 429)。
+  不要把这种"主对话直起草"再退回 `claude -p`。
 - **mtime cache** in `scan.js` / `scan-session.js`: a row is skipped when
   `existing.jsonlMtime === card.jsonlMtime`. Don't break this — full re-scoring
   the author's local 346-session corpus cost ~$10, and the cache is the only

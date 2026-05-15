@@ -58,10 +58,17 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/scan.js --count-only $FLAGS
 - `newToScore < 10` → 量太少,标定意义不大,**直接跳到步 4** 但报告一下粗估
 - `newToScore >= 10` → 走步 3 标定
 
-粗估公式(经验值,基于 Haiku 4.5):
-- 单条成本 $0.005–0.02(取决于会话长度)
-- 单条墙钟 ≈ `(card 体积 / 网络 + Haiku 处理) / concurrency`,典型 1–4 秒/条(8 并发下)
-- 报给用户:`本机有 N 条需要评分,粗估 $A–$B、约 M 分钟,先标定 10 条拿真实数字`
+粗估公式(经验值,基于 Haiku 4.5;`N = newToScore`、`C = concurrency`,默认 8):
+- 单条成本 $0.005–0.02(取决于会话长度;启发式预筛命中的会话成本 $0,见下文)
+- 时间:
+  - `N >= C` → 总耗时 ≈ `N × 17s`(并发用满,平均每条 17s 摊销)
+  - `N < C` → 总耗时 ≈ `~60s`(并发数白白浪费,瓶颈就是最慢那一条的延迟)
+- **启发式预筛**(lib/heuristic.js)会把显然低值的会话(短对话/单问单答/零编辑/窗口无 commit)
+  直接本地打 10-15 分、跳过 Haiku。这部分会议**不花钱也不占耗时**,但 preflight 阶段
+  目前无法精确预测命中率,所以这里粗估按"全部走 Haiku"算上限。实际落地时:
+  - 标定批的 `[scan] done` 行里 `heuristic=K` 字段会告诉你这 10 条命中了几条;
+  - 把比例外推到剩余 `(N - 10)`,可以拿到更准的"实际要花的 \$"和"实际墙钟"。
+- 报给用户:`本机有 N 条需要评分,粗估上限 $A–$B、约 M 分钟(启发式预筛可能进一步压成本/耗时),先标定 10 条拿真实数字`
 
 ### 步 3 — 标定批
 
@@ -73,11 +80,16 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/scan.js --limit 10 $FLAGS
 抓最后一行 `[scan] done ...` 里的字段:
 - `cost=$X.XX`:这 10 条总花费
 - `elapsed_sec=Y.Y`:这 10 条墙钟秒
-- `avg_cost=$Z.ZZZZ`、`avg_sec=W.WW`:已经算好的单条均值
+- `avg_cost=$Z.ZZZZ`、`avg_sec=W.WW`:已经算好的单条均值(仅 ok 路径,heuristic 不计)
+- `ok=O heuristic=K`:Haiku 实评 O 条、启发式命中 K 条 → 启发式命中率 `K/10`
 
-外推剩余 `(newToScore - 10)` 条:
-- 预估总花费 `≈ avg_cost × (newToScore - 10) + 这次的 cost`
-- 预估墙钟分钟数 `≈ avg_sec × (newToScore - 10) / concurrency / 60 + 已用的`
+外推剩余 `(newToScore - 10)` 条(用标定批实测覆盖步 2 的粗估):
+- 命中率 `h = K / 10`(假设剩余 N 条按同分布)
+- 预估剩余 Haiku 调用数 `≈ (newToScore - 10) × (1 - h)`
+- 预估剩余总花费 `≈ avg_cost × (newToScore - 10) × (1 - h) + 这次的 cost`
+- 预估剩余墙钟 ≈ 以"预估剩余 Haiku 调用数"为新的 N 套步 2 公式:
+  - N >= concurrency → `N × 17s`(或用实测 avg_sec × concurrency 替换 17)
+  - N < concurrency → `~60s`
 
 把这两个数字、以及标定批本身的实测,汇总成一段简短报告给用户。
 
@@ -114,10 +126,11 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/scan.js --limit 10 $FLAGS
 ### 步 6 — 终态报告
 
 `[scan] done` 行包含所有最终字段。汇总给用户:
-- 扫描总数 / ok / cached / skipped / error / 重试次数(若有)
+- 扫描总数 / ok / **heuristic**(本地启发式直接打低分,$0)/ cached / skipped / error / 重试次数(若有)
 - 累计 cost、墙钟时间
 - `index.jsonl` 当前条数(可以用 `wc -l` 查一下)
 - 失败日志:`~/.ai-best-practice/logs/ai-best-practice.log`(若有 error,提醒用户去看)
+- 如果 `heuristic` 占比 > 50%,提一句"启发式预筛省了大半的 Haiku 调用,若担心误杀可 `AIBP_NO_HEURISTIC=1 ...` 重跑"
 
 ## 内部脚本支持的 flag(供你拼接,不要直接暴露给用户)
 

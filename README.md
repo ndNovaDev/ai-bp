@@ -107,9 +107,13 @@ claude --plugin-dir /path/to/ai-bp
 ```
 
 流程:列出候选 → AI 二次排序(时效/多样/完整度) → `AskUserQuestion` 给你勾 1–3 条 →
-组装证据包 → Sonnet 出 STAR 初稿 + 3-5 道采访问题 → 通过 `AskUserQuestion` 逐题问你
-(补 LLM 看不出的动机 / 真实 ROI / 杠杆) → Sonnet 融合答复出终稿 → 写入
-`~/.ai-best-practice/weekly/<期号>-<案例名 slug>.md`。
+组装证据包 → **主对话的 Claude**(就是你正在用的那个会话)出 STAR 初稿 + 正好 4 道采访题(S/T/A/R 各一)
+→ 一次 `AskUserQuestion` 把 4 题一屏问完(补 LLM 看不出的动机 / 真实 ROI / 杠杆) →
+主对话融合答复出终稿 → `Write` 到 `~/.ai-best-practice/weekly/<期号>-<案例名 slug>.md` →
+落盘后跑 `detectBanned`,命中禁用短语就重写一次。
+
+**起草不再 spawn `claude -p`**:草稿就在你当前这个 Claude Code 会话里写,复用你的模型(通常已是 1M 上下文),
+共享鉴权,token 走 `/cost`。
 
 起草面向一个"假想敌":公司内部用来审计 AI 最佳实践的 AI。它带 7 条探针(真实性、问题
 难度、AI 协作成熟度、沉淀深度、杠杆、成本诚实度、故事完整度),写在 `lib/draft.js` 的
@@ -129,18 +133,22 @@ claude --plugin-dir /path/to/ai-bp
 
 | 变量 | 默认 | 说明 |
 |------|------|------|
-| `AIBP_SCORE_MODEL` | `claude-haiku-4-5` | 评分模型 |
-| `AIBP_DRAFT_MODEL` | `claude-sonnet-4-6` | 起草模型 |
+| `AIBP_SCORE_MODEL` | `claude-haiku-4-5` | 评分模型(走 `claude -p` 子进程) |
 | `AIBP_CONCURRENCY` | `8` | scan 并发数 |
 | `AIBP_DATA_DIR` | `~/.ai-best-practice` | 数据根目录(含 `data/` / `weekly/` / `logs/`) |
 | `AIBP_SCORE_TIMEOUT_MS` | `180000` | 单条评分超时 |
-| `AIBP_DRAFT_TIMEOUT_MS` | `240000` | 起草超时 |
+| `AIBP_NO_HEURISTIC` | unset | 设为 `1` 关掉本地启发式预筛(所有会话都走 Haiku) |
+
+> 起草用的不是子进程,所以没有 `AIBP_DRAFT_MODEL`:`/ai-practice-pick` 在你当前那个 Claude Code
+> 会话里直接写草稿,等于"主对话的模型就是起草模型"。你切换 `/model` 就切了起草模型。
 
 ## 关键设计
 
-- **评分流程统一**:hook、scan、pick 二次排序都走 `lib/score.js` / `claude -p`,一处迭代,处处生效
+- **评分走子进程,起草不走**:scoring(Haiku)走 `claude -p` 子进程(后台、批量、便宜);drafting 走**主对话本身**(`/ai-practice-pick` 在你当前会话里直接产出 markdown),复用主会话的模型 + 1M 上下文,不再起 1M 子进程,也避开 Anthropic 长上下文 Extra Usage 计费档
 - **LLM 走 claude cli**:不直接调 Anthropic API,鉴权完全复用 Claude Code,无 key 管理
 - **mtime 缓存**:重复 scan 跳过未变更的 jsonl
+- **本地启发式预筛**(0.1.7):`lib/heuristic.js` 在调 Haiku 之前先看一眼会话——典型闲聊/单问单答/零编辑/git 窗口内无 commit 的,直接本地打 10-15 分、零成本、跳过 Haiku。粗估能压 30-50% 的 Haiku 调用。完全关掉:`AIBP_NO_HEURISTIC=1`
+- **git 证据进卡片**(0.1.7):parse-jsonl 读 cwd 的 `git log` 拿到会话时间窗口内的 commit,作为"AI 产出真的落地了"的强证据塞进 Haiku 评分卡(`gitCommitsInWindow` 字段)。比 `filesEdited` 计数靠谱得多
 - **`--bare --no-session-persistence`**:防止 scorer 自己的会话被 hook 递归索引
 
 ## 故障排除

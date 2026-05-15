@@ -1,15 +1,18 @@
 // 周报起草:两阶段 + 一轮采访。
-//   proposeAndProbe(evidencePack)  → 出初稿 + 采访问题清单(LLM 看不出的信息)
-//   <commands 层调 AskUserQuestion 收集答案>
-//   finalize({evidencePack, drafts, answers}) → 最终 markdown,自动过滤 LLM 废话
+//   buildProbePrompt(...)    → 出"初稿 + 采访问题"用的 prompt 文本
+//   <slash command 把 prompt 喂给主对话的 Claude;主 Claude 生成 STAR + 4 道题>
+//   <slash command 调 AskUserQuestion 一次性问完 4 题>
+//   buildFinalizePrompt(...) → 出"最终 markdown"用的 prompt 文本
+//   <主 Claude 应用 prompt,Write 到 ~/.ai-best-practice/weekly/>
+//   detectBanned(md)         → 后置检测 LLM 套路短语;命中由 slash command 让主 Claude 重写一次
 //
-// 假想敌:公司内部的"AI 最佳实践审计 AI",它从全公司每周成百上千份提交里挑真金,不奖励"会写报告的人"。
-// 见 AUDITOR_LENS。
-
-const { spawn } = require('child_process');
-
-const MODEL = process.env.AIBP_DRAFT_MODEL || 'claude-sonnet-4-6';
-const TIMEOUT_MS = Number(process.env.AIBP_DRAFT_TIMEOUT_MS || 240_000);
+// 起草工作完全在主对话内进行,不再 spawn `claude -p` 子进程 — 一来主 Claude 通常是
+// 1M context 模型(evidencePack 多案例 + jsonl 头尾会爆 200K 标准窗口),二来子进程的
+// 1M 变体在 Anthropic 走"长上下文额外用量"额度,容易被 429 卡住。共享主会话的鉴权和
+// 模型选择,零额外配置。
+//
+// 假想敌:公司内部的"AI 最佳实践审计 AI",它从全公司每周成百上千份提交里挑真金,
+// 不奖励"会写报告的人"。见 AUDITOR_LENS。
 
 const AUDITOR_LENS = `你写的这份周报会被一个独立的"AI 最佳实践审计 AI"逐条评估。它的 7 条探针你必须心里有数:
 1. 真实性:它在找编造痕迹、套话、空 artifact。引用具体 commit hash / sessionId / 文件路径,但不复述其内容。
@@ -60,17 +63,18 @@ function titleToSlug(title) {
   return s.length > 60 ? s.slice(0, 60).replace(/-+$/, '') : s;
 }
 
-// ===== 阶段 1:proposeAndProbe =====
+function extractTitle(markdown) {
+  const m = /^#\s+(.+)$/m.exec(markdown || '');
+  return m ? m[1].trim() : 'untitled';
+}
 
-const PROBE_SYSTEM = `${AUDITOR_LENS}
+// ===== 提示词模板 =====
+// 这些函数返回**纯字符串**:slash command 拿到字符串后,作为给主 Claude 的下一条
+// 指令喂进对话上下文。主 Claude 在它自己的下一次回复里产出 STAR + 4 题 / 终稿。
+// AUDITOR_LENS 已经内嵌进每条 prompt(原 PROBE_SYSTEM / FINALIZE_SYSTEM 取消)。
 
-你现在是初稿阶段。读完证据包后,你要做两件事:
-
-A) 用现有证据填一份 STAR 初稿(四段)。证据不足以判断的地方,该段写一句 "[需采访:具体缺什么]"。
-B) 列出 3-5 个采访问题,问 LLM 看不出来的事:作者的动机、当时的痛点强度、被淘汰的备选方案、真实 ROI、下次能复用到哪里、有没有走过弯路。
-
-输出严格 JSON,无 markdown 围栏,无开场白。`;
-
+// PROBE_SCHEMA 留作"主 Claude 应当产出的形状"的口头契约 — 没有 schema enforcement
+// 了(主 Claude 不走 --json-schema),但 prompt 里会要求严格 JSON,实测稳定。
 const PROBE_SCHEMA = {
   type: 'object',
   required: ['proposedTitle', 'draftSTAR', 'questions'],
@@ -87,9 +91,11 @@ const PROBE_SCHEMA = {
       },
     },
     questions: {
+      // 固定 4 道,按 S/T/A/R 各一,顺序由 prompt 约束(JSON Schema 表达不了"分别命中每个 enum 值")。
+      // slash command 会把这 4 道压到同一次 AskUserQuestion 调用 — API 上限刚好 4 题。
       type: 'array',
-      minItems: 3,
-      maxItems: 5,
+      minItems: 4,
+      maxItems: 4,
       items: {
         type: 'object',
         required: ['module', 'prompt', 'options'],
@@ -109,45 +115,56 @@ const PROBE_SCHEMA = {
 };
 
 function buildProbePrompt({ rangeLabel, evidencePack }) {
-  return `时间范围:${rangeLabel}
+  return `${AUDITOR_LENS}
+
+你现在是初稿阶段。基于下面的证据包,做两件事:
+
+A) 用现有证据填一份 STAR 初稿(四段)。证据不足以判断的地方,该段写一句 "[需采访:具体缺什么]"。
+B) 出**正好 4 道**采访题,**按 S→T→A→R 顺序各一道**(slash command 会把这 4 道压到同一个 AskUserQuestion 调用,一屏勾完)。
+   每道问 LLM 看不出来的事:作者的动机、当时的痛点强度、被淘汰的备选方案、真实 ROI、下次能复用到哪里、有没有走过弯路。
+
+时间范围:${rangeLabel}
 
 [证据包]
 ${JSON.stringify(evidencePack, null, 2)}
 
+输出严格 JSON,无 markdown 围栏,无开场白。形状:
+
+{
+  "proposedTitle": "案例名(8-20 字,不含日期/期号/案例编号)",
+  "draftSTAR": {
+    "situation": "60-180 字,作者当时的处境,问题为什么会冒出来",
+    "task":      "60-180 字,作者给自己定的目标 + 隐含约束",
+    "action":    "60-180 字,关键动作,叙事化,不堆工具名,跳过琐碎实现",
+    "result":    "60-180 字,产物 + 量化或诚实'未量化' + 一句点到未来杠杆"
+  },
+  "questions": [
+    { "module": "S", "prompt": "...", "options": ["最佳猜测", "其他角度", "其他角度?"] },
+    { "module": "T", "prompt": "...", "options": [...] },
+    { "module": "A", "prompt": "...", "options": [...] },
+    { "module": "R", "prompt": "...", "options": [...] }
+  ]
+}
+
 要求:
-1. proposedTitle 是具体案例名(8-20 字),不含日期/期号/案例编号。例:"会话评分流水线工程化"。
-2. draftSTAR 四段:
-   - situation:作者当时的处境,问题为什么会冒出来。
-   - task:作者给自己定的目标,以及隐含的约束。
-   - action:做了什么,只写关键动作,跳过琐碎实现。叙事化,不堆工具名。
-   - result:产物 + 量化或诚实"未量化" + 一句话点到未来杠杆。
-   每段 60-180 字。证据不足以判断的地方留 [需采访:...]。
-3. questions 3-5 道。每道:
-   - module: S/T/A/R 任一
-   - prompt: 用户能秒懂的问题,口语化,中文。
-   - options: 2-3 个候选答案,第一个是你基于证据的最佳猜测(用户直接点 = 静默接受),其余是其他合理角度。
-   不要问 LLM 自己能从证据包推出来的事。专问动机、痛点、备选、真实 ROI、复用面、弯路。`;
+- 4 道题严格按 S→T→A→R 顺序排列,module 字段必须分别是 "S","T","A","R"。
+- 每道题 options 2-3 个;第一个是基于证据的最佳猜测(用户直接点 = 静默接受),其余是其他合理角度。
+- 不要问 LLM 自己能从证据包推出来的事。专问动机、痛点、备选、真实 ROI、复用面、弯路。
+- 用户秒懂的口语化中文。`;
 }
 
-async function proposeAndProbe({ rangeLabel, evidencePack }) {
-  const prompt = buildProbePrompt({ rangeLabel, evidencePack });
-  const out = await runClaude({
-    prompt,
-    system: PROBE_SYSTEM,
-    jsonSchema: PROBE_SCHEMA,
-  });
-  const parsed = JSON.parse(out.result);
-  return { ...parsed, cost: out.cost };
-}
-
-// ===== 阶段 2:finalize =====
-
-function buildFinalizePrompt({ rangeLabel, evidencePack, drafts, answers, hasMultipleCases }) {
+function buildFinalizePrompt({ rangeLabel, evidencePack, drafts, answers, hasMultipleCases, bannedHits }) {
   const answersBlock = answers
     .map((a, i) => `Q${i + 1} (${a.module}): ${a.prompt}\nA: ${a.answer || '(用户未明确)'}`)
     .join('\n\n');
 
-  return `时间范围:${rangeLabel}
+  const rewriteNote = (bannedHits && bannedHits.length > 0)
+    ? `\n\n[重写要求]\n上一次产出命中了禁用短语:${bannedHits.join('、')}。请用同样的事实重写,改用平实白话,绕开这些短语。`
+    : '';
+
+  return `${AUDITOR_LENS}
+
+时间范围:${rangeLabel}
 案例数:${hasMultipleCases ? '多案例' : '单案例'}
 
 [证据包]
@@ -177,94 +194,16 @@ ${
 - 不堆工具名清单,如果非提不可就用一句话带过("以 Claude Code 的 hook + slash command 协作")。
 - 不要这些 LLM 套路短语:${BANNED_PHRASES.join('、')}。
 - 不要 emoji,不要独立的 --- 分隔线,不要 "首先...其次...最后" 的总分总骨架。
-- 直接输出 markdown 正文,不要 \`\`\` 围栏,不要任何前言或解释。`;
-}
-
-const FINALIZE_SYSTEM = AUDITOR_LENS;
-
-async function finalize({ rangeLabel, evidencePack, drafts, answers, hasMultipleCases }) {
-  const prompt = buildFinalizePrompt({ rangeLabel, evidencePack, drafts, answers, hasMultipleCases });
-  const first = await runClaude({ prompt, system: FINALIZE_SYSTEM });
-  const hits = detectBanned(first.result);
-  if (hits.length === 0) {
-    return {
-      markdown: first.result,
-      title: extractTitle(first.result),
-      cost: first.cost,
-      retried: false,
-    };
-  }
-  // 触发一次重写。继续命中就接受现状,不再无限循环。
-  const retryPrompt = `${prompt}
-
-[重写要求]
-上一次产出命中了禁用短语:${hits.join('、')}。请用同样的事实重写,改用平实白话,绕开这些短语。直接输出新版 markdown。`;
-  const second = await runClaude({ prompt: retryPrompt, system: FINALIZE_SYSTEM });
-  return {
-    markdown: second.result,
-    title: extractTitle(second.result),
-    cost: (first.cost || 0) + (second.cost || 0),
-    retried: true,
-  };
-}
-
-function extractTitle(markdown) {
-  const m = /^#\s+(.+)$/m.exec(markdown || '');
-  return m ? m[1].trim() : 'untitled';
-}
-
-// ===== claude -p 子进程封装 =====
-
-function runClaude({ prompt, system, jsonSchema }) {
-  return new Promise((resolve, reject) => {
-    const args = [
-      '-p',
-      '--bare',
-      '--no-session-persistence',
-      '--permission-mode', 'bypassPermissions',
-      '--model', MODEL,
-      '--output-format', 'json',
-      '--append-system-prompt', system,
-    ];
-    if (jsonSchema) {
-      args.push('--json-schema', JSON.stringify(jsonSchema));
-    }
-    const child = spawn('claude', args, { stdio: ['pipe', 'pipe', 'pipe'] });
-    let stdout = '', stderr = '';
-    const timer = setTimeout(() => {
-      child.kill('SIGKILL');
-      reject(new Error(`claude -p timeout after ${TIMEOUT_MS}ms`));
-    }, TIMEOUT_MS);
-    child.stdout.on('data', (d) => (stdout += d.toString()));
-    child.stderr.on('data', (d) => (stderr += d.toString()));
-    child.on('error', (e) => { clearTimeout(timer); reject(e); });
-    child.on('close', (code) => {
-      clearTimeout(timer);
-      if (code !== 0) return reject(new Error(`claude -p exit ${code}: ${stderr.slice(0, 500)}`));
-      let outer;
-      try { outer = JSON.parse(stdout); }
-      catch (e) { return reject(new Error(`claude -p output not JSON: ${stdout.slice(0, 300)}`)); }
-      if (outer.is_error) return reject(new Error(`claude error: ${outer.result || outer.error}`));
-      resolve({
-        result: jsonSchema ? JSON.stringify(outer.structured_output) : (outer.result || ''),
-        cost: outer.total_cost_usd,
-      });
-    });
-    child.stdin.write(prompt);
-    child.stdin.end();
-  });
+- 直接输出 markdown 正文,不要 \`\`\` 围栏,不要任何前言或解释。${rewriteNote}`;
 }
 
 module.exports = {
-  proposeAndProbe,
-  finalize,
-  titleToSlug,
-  detectBanned,
-  extractTitle,
-  buildProbePrompt,
-  buildFinalizePrompt,
   AUDITOR_LENS,
   BANNED_PHRASES,
   PROBE_SCHEMA,
-  MODEL,
+  buildProbePrompt,
+  buildFinalizePrompt,
+  detectBanned,
+  titleToSlug,
+  extractTitle,
 };

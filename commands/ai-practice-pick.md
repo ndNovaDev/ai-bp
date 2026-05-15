@@ -101,27 +101,37 @@ echo "$LIST_JSON" | claude -p --bare --no-session-persistence \
 
 多案例就组装一个数组,每条都是上述结构。
 
-### 步 5 — 起草:两阶段 + 一轮采访
+### 步 5 — 起草:两阶段 + 一轮采访(**在主对话内做,不 spawn `claude -p`**)
 
-起草流程不再是一次 LLM 大调用。换成:LLM 先给 STAR 初稿 + 采访问题,你(Claude)在主对话里
-逐题问用户,用户答完再二次定稿。整套服务一个假想敌:公司内部的"AI 最佳实践审计 AI"
-(它的 7 条探针已写进 `lib/draft.js::AUDITOR_LENS`)。
+起草不再起子进程。你(主对话的 Claude)就是写作 LLM:`lib/draft.js` 只给你提供
+**提示词模板字符串**,你拿到字符串后,在自己的下一次回复里产出 STAR / markdown。
+好处:省了 1M context 子进程的 Extra Usage 计费,也省一次模型冷启动。
 
-#### 5a — 出初稿和问题
+整套服务一个假想敌:公司内部的"AI 最佳实践审计 AI",它的 7 条探针已经写在
+`lib/draft.js::AUDITOR_LENS`,会自动内嵌进每条 prompt,你不用单独想。
 
-对**每个**选中的 sessionId,单独调一次:
+#### 5a — 出初稿和 4 道采访题(单案例)
+
+对**每个**选中的 sessionId,先把 evidencePack 落到临时文件(JSON 里有特殊字符,heredoc 拼接易出错),
+再用 node 拼出 probe prompt 字符串:
 
 ```bash
-node -e '
+# 1) 写 evidencePack 到 tmp(用 Write 工具或 cat heredoc 都行)
+EVID=$(mktemp -t aibp-evid.XXXXXX.json)
+# ... 用 Write 工具把 evidencePack JSON 写到 $EVID ...
+
+# 2) 拿到要应用的 prompt 文本
+RANGE_LABEL='2026-W20' node -e '
 const fs = require("fs");
-const { proposeAndProbe } = require("'${CLAUDE_PLUGIN_ROOT}'/scripts/lib/draft");
-const evidencePack = JSON.parse(fs.readFileSync(0, "utf8"));
-proposeAndProbe({rangeLabel: process.env.RANGE_LABEL, evidencePack}).then(r => {
-  console.log(JSON.stringify(r));
-});' <<< "$EVIDENCE_JSON"
+const { buildProbePrompt } = require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/draft");
+const evidencePack = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+console.log(buildProbePrompt({ rangeLabel: process.env.RANGE_LABEL, evidencePack }));
+' "$EVID"
 ```
 
-返回结构(参考 `PROBE_SCHEMA`):
+Bash 输出的就是给你看的 probe prompt(已内嵌 AUDITOR_LENS、证据包 JSON 和形状要求)。
+**你的下一条回复**要按那个 prompt 的形状产出严格 JSON:
+
 ```json
 {
   "proposedTitle": "会话评分流水线工程化",
@@ -129,61 +139,116 @@ proposeAndProbe({rangeLabel: process.env.RANGE_LABEL, evidencePack}).then(r => {
   "questions": [
     { "module": "S", "prompt": "本次最痛的痛点是什么?",
       "options": ["每周手动翻历史耗时", "周报内容主观难复用", "想试 Claude Code 的 hook 能力"] },
-    ...
+    { "module": "T", "prompt": "...", "options": [...] },
+    { "module": "A", "prompt": "...", "options": [...] },
+    { "module": "R", "prompt": "...", "options": [...] }
   ]
 }
 ```
 
-#### 5b — 采访用户(每题一个 AskUserQuestion)
+无需写到磁盘 — JSON 内容直接保留在你的上下文里,下一步用就行。
 
-对每个 question 调一次 **AskUserQuestion**:
-- `question` = `question.prompt`
-- `header` = 按 module 翻译:`S` → `背景`、`T` → `目标`、`A` → `做法`、`R` → `结果`
-- `options[0].label` = `question.options[0]`(LLM 最佳猜测,加 `(推荐)` 后缀)
-- 其余 options 平铺
-- 不要 `multiSelect`,单选即可,用户也可走 Other 自由填
+#### 5b — 采访用户(**一次** AskUserQuestion,批量 4 题)
 
-收集 answers 数组:`[{module, prompt, answer}]`。用户没作答(取消/空)的就 `answer: null`。
+把上一步产出的 4 道 question **打包到同一次** `AskUserQuestion` 调用(API 的 `questions` 数组上限刚好 4)。
+组装方式:
 
-#### 5c — 最终定稿
+```
+AskUserQuestion(
+  questions: [
+    {
+      question: <questions[0].prompt>,
+      header: '背景',
+      multiSelect: false,
+      options: [
+        { label: <questions[0].options[0]> + ' (推荐)', description: 'LLM 基于证据的最佳猜测' },
+        { label: <questions[0].options[1]>, description: '' },
+        { label: <questions[0].options[2]>, description: '' } // 若有
+      ]
+    },
+    { ...questions[1] header='目标'... },
+    { ...questions[2] header='做法'... },
+    { ...questions[3] header='结果'... }
+  ]
+)
+```
+
+`header` 按 module 翻译:`S → 背景`、`T → 目标`、`A → 做法`、`R → 结果`。
+
+收集 answers 数组:`[{module, prompt, answer}]`,严格按 questions 原顺序。用户走 Other 或跳过的 answer 就 `null`。
+**多案例**:对每条 sessionId 各做一次 5a + 一次 5b(每案 1 屏 4 题),不要把多案例的题混到一屏。
+
+#### 5c — 最终定稿(主对话产出,Write 落盘)
+
+```bash
+# 1) 把"finalize 输入"写到 tmp:{rangeLabel, evidencePack, drafts, answers, hasMultipleCases}
+FIN=$(mktemp -t aibp-fin.XXXXXX.json)
+# ... 用 Write 工具把上述对象 JSON 写到 $FIN ...
+
+# 2) 拿到要应用的 finalize prompt 文本
+node -e '
+const fs = require("fs");
+const { buildFinalizePrompt } = require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/draft");
+const payload = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+console.log(buildFinalizePrompt(payload));
+' "$FIN"
+```
+
+Bash 输出的就是 finalize prompt(已内嵌 AUDITOR_LENS、证据包、初稿、用户答复、结构与写作规则)。
+**你的下一条回复**:直接产出最终 markdown 正文(无围栏、无前言),然后用 `Write` 工具落盘:
+
+```bash
+# 拿到落盘路径:WEEKLY_DIR/<WEEK_PREFIX>-<slug>.md
+node -e '
+const path = require("path");
+const { titleToSlug } = require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/draft");
+const { WEEKLY_DIR } = require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/paths");
+console.log(path.join(WEEKLY_DIR, process.env.WEEK_PREFIX + "-" + titleToSlug(process.env.TITLE) + ".md"));
+' # TITLE=<proposedTitle 或 期号> WEEK_PREFIX=<2026-W20 或 recent-3d>
+```
+
+`WEEK_PREFIX` 形如 `2026-W20`(直接取自时间范围,没 ISO 周时用 `recent-3d` 这种)。
+
+#### 5d — 后置检测禁用短语,命中则重写一次
+
+落盘后跑 `detectBanned`:
 
 ```bash
 node -e '
 const fs = require("fs");
-const path = require("path");
-const { finalize, titleToSlug } = require("'${CLAUDE_PLUGIN_ROOT}'/scripts/lib/draft");
-const { WEEKLY_DIR } = require("'${CLAUDE_PLUGIN_ROOT}'/scripts/lib/paths");
-const payload = JSON.parse(fs.readFileSync(0, "utf8"));
-finalize(payload).then(r => {
-  fs.mkdirSync(WEEKLY_DIR, { recursive: true });
-  const slug = titleToSlug(r.title);
-  const outPath = path.join(WEEKLY_DIR, process.env.WEEK_PREFIX + "-" + slug + ".md");
-  fs.writeFileSync(outPath, r.markdown);
-  console.log(JSON.stringify({path: outPath, cost: r.cost, retried: r.retried}));
-});' <<< "$FINAL_INPUT_JSON"
+const { detectBanned } = require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/draft");
+const md = fs.readFileSync(process.argv[1], "utf8");
+console.log(JSON.stringify(detectBanned(md)));
+' "$OUT_PATH"
 ```
 
-`FINAL_INPUT_JSON` 是 `{rangeLabel, evidencePack, drafts: draftSTAR, answers, hasMultipleCases}`。
-`WEEK_PREFIX` 形如 `2026-W20`(直接取自时间范围,没 ISO 周时用 `recent-3d` 这种)。
+输出是命中的禁用词数组。**空数组就完成了**。非空则:
+- 重新拼 finalize prompt,这次给 `buildFinalizePrompt` 多传一个 `bannedHits: [...]`,
+  它会在 prompt 末尾追加"重写要求"段
+- 你应用新 prompt,**重写一次** markdown,Write 覆盖原文件
+- 不管第二次还命不命中,**只重写一次**,接受现状
 
-#### 5d — 多案例情况
+#### 5e — 多案例情况
 
-如果用户在步 3 勾了 ≥ 2 条 session,先对每个 session 走完 5a-5b(每案各采访一组问题),
-然后**一次** 5c 调用,传 `hasMultipleCases: true`,`evidencePack` 是数组,`drafts` 也是数组。
-finalize 会输出 H1=期号、每案 H2=case 名的多案例版式。
+如果用户在步 3 勾了 ≥ 2 条 session:先对每条 session 跑完 5a + 5b(每案 1 屏 4 题),
+然后**一次** 5c,传 `hasMultipleCases: true`,`evidencePack` 是数组,`drafts` 也是数组,
+`answers` 把多案的拼起来(每条 answer 加 `case: <idx>` 或前缀进 prompt 区分都行,
+finalize prompt 自己会处理顺序)。`buildFinalizePrompt` 会输出 H1=期号、每案 H2=案例名 的多案版式。
 
-单案例(勾了 1 条)→ `hasMultipleCases: false`,H1 直接是案例名,无 H2。
+单案例(勾 1 条)→ `hasMultipleCases: false`,H1 直接是案例名,无 H2。
 
 ### 步 6 — 报告
 
 - 输出文件路径
-- 起草成本(初稿 + 终稿,若触发禁用词重写就加重写成本)
-- 是否触发了禁用短语重写(`retried: true` 提一下)
+- 是否触发了禁用短语重写(5d 命中过就提一下"已重写一次")
 - 未选中的候选(下次可用)
 - 提示用户:**这是初稿,审计 AI 探针只是设计假想敌,真审稿要靠人**。检阅后再提交。
 
 周报落在 `~/.ai-best-practice/weekly/`(可用 `AIBP_DATA_DIR` 覆盖),
 不在插件目录里,插件升级不会丢历史草稿。
+
+**关于成本**:起草现在在主对话进行,所以不再单独报"起草 cost" — 它直接计入你这个主会话的 token 用量。
+如果用户问,可以告诉他:"草稿在当前对话里写的,没有起子进程,token 用量看 `/cost`"。
 
 ## 内部脚本支持的 flag(供你拼接)
 

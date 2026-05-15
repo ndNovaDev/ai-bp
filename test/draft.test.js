@@ -25,13 +25,20 @@ test('PROBE_SCHEMA 强制 proposedTitle / draftSTAR / questions 必填', () => {
     new Set(PROBE_SCHEMA.required),
     new Set(['proposedTitle', 'draftSTAR', 'questions']),
   );
-  assert.equal(PROBE_SCHEMA.properties.questions.minItems, 3);
-  assert.equal(PROBE_SCHEMA.properties.questions.maxItems, 5);
+  // 固定 4 道(S/T/A/R 各一),好压到一次 AskUserQuestion 调用里(API 上限 4 题)。
+  assert.equal(PROBE_SCHEMA.properties.questions.minItems, 4);
+  assert.equal(PROBE_SCHEMA.properties.questions.maxItems, 4);
   const q = PROBE_SCHEMA.properties.questions.items;
   assert.deepEqual(new Set(q.required), new Set(['module', 'prompt', 'options']));
   assert.deepEqual(q.properties.module.enum, ['S', 'T', 'A', 'R']);
   assert.equal(q.properties.options.minItems, 2);
   assert.equal(q.properties.options.maxItems, 3);
+});
+
+test('buildProbePrompt: 明确"正好 4 题、S→T→A→R 顺序"', () => {
+  const p = buildProbePrompt({ rangeLabel: '2026-W20', evidencePack: sampleEvidence });
+  assert.match(p, /4 道/);
+  assert.match(p, /S→T→A→R|S\s*→\s*T\s*→\s*A\s*→\s*R/);
 });
 
 // ─── titleToSlug ──────────────────────────────────────────────────────
@@ -167,4 +174,48 @@ test('buildFinalizePrompt: 用户未答复的问题保留 "(用户未明确)"', 
     hasMultipleCases: false,
   });
   assert.match(p, /用户未明确/);
+});
+
+// ─── 主对话起草:确保 AUDITOR_LENS 内嵌、bannedHits 注入触发重写 ────────
+
+test('buildProbePrompt: AUDITOR_LENS 内嵌(不再依赖 --append-system-prompt)', () => {
+  const p = buildProbePrompt({ rangeLabel: 'X', evidencePack: sampleEvidence });
+  assert.match(p, /审计 AI/);
+  assert.match(p, /STAR/);
+  assert.match(p, /边际成本/);
+});
+
+test('buildFinalizePrompt: AUDITOR_LENS 内嵌', () => {
+  const p = buildFinalizePrompt({
+    rangeLabel: 'X', evidencePack: sampleEvidence,
+    drafts: {}, answers: [], hasMultipleCases: false,
+  });
+  assert.match(p, /审计 AI/);
+});
+
+test('buildFinalizePrompt: 无 bannedHits 时不带重写指令', () => {
+  const p = buildFinalizePrompt({
+    rangeLabel: 'X', evidencePack: sampleEvidence,
+    drafts: {}, answers: [], hasMultipleCases: false,
+  });
+  assert.doesNotMatch(p, /\[重写要求\]/);
+});
+
+test('buildFinalizePrompt: bannedHits 非空时注入重写指令并列出命中词', () => {
+  const p = buildFinalizePrompt({
+    rangeLabel: 'X', evidencePack: sampleEvidence,
+    drafts: {}, answers: [], hasMultipleCases: false,
+    bannedHits: ['使用了', '可以说'],
+  });
+  assert.match(p, /\[重写要求\]/);
+  assert.match(p, /使用了/);
+  assert.match(p, /可以说/);
+  assert.match(p, /重写/);
+});
+
+test('lib/draft.js 不再 spawn 子进程(没有 proposeAndProbe / finalize / MODEL)', () => {
+  const draft = require('../scripts/lib/draft');
+  assert.equal(typeof draft.proposeAndProbe, 'undefined');
+  assert.equal(typeof draft.finalize, 'undefined');
+  assert.equal(typeof draft.MODEL, 'undefined');
 });
