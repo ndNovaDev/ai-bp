@@ -74,9 +74,9 @@ these paths — always import from `paths.js`.
 Two trigger paths converge on the same scoring pipeline:
 
 ```
-Stop hook → hooks/on-stop.sh → scripts/scan-session.js ─┐
-                                                        │
-/ai-practice-scan → scripts/scan.js (batch + cache) ────┤→ lib/parse-jsonl → lib/score → INDEX_PATH
+SessionEnd hook → hooks/on-stop.sh → scripts/scan-session.js ─┐
+                                                              │
+/ai-practice-scan → scripts/scan.js (batch + cache) ──────────┤→ lib/parse-jsonl → lib/score → INDEX_PATH
                                                         │
 /ai-practice-pick → scripts/list.js → lib/draft.js (buildProbePrompt → 主对话起草 → 采访 → buildFinalizePrompt → 主对话起草 → Write) → WEEKLY_DIR
 ```
@@ -120,8 +120,14 @@ Key design points to preserve when modifying:
 - **Score parse retry**: `lib/score.js#scoreCard` retries once on JSON parse error
   only (not on timeout/crash) — Haiku occasionally ignores the schema. SYSTEM is
   deliberately strict ("第一个字符必须是 `{`"); don't soften it.
-- **Hook is best-effort**: `on-stop.sh` backgrounds `nohup node scan-session.js` and
-  always `exit 0`. Failures only go to the log; never block session shutdown.
+- **Hook is best-effort + uses SessionEnd not Stop**: `on-stop.sh` backgrounds
+  `nohup node scan-session.js` and always `exit 0`. Failures only go to the log;
+  never block session shutdown. The hook is wired to **SessionEnd** (fires once
+  per session) rather than **Stop** (would fire after every assistant turn —
+  burns Haiku $ on long sessions). Trade-off: `/exit` slash-command exits do not
+  trigger SessionEnd (Claude Code issue #35892); rely on `/ai-practice-scan` as
+  the periodic fallback to catch missed sessions via filesystem walk + mtime
+  cache. Don't switch back to `Stop` without restoring an aggressive debounce.
 - **Slash commands take natural-language args**. `commands/ai-practice-{scan,pick}.md`
   contain mapping tables (Chinese phrase → CLI flag). Claude itself does the
   translation in-conversation; the scripts only see flags like `--recent 7d`.

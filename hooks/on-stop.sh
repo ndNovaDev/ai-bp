@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Stop hook 入口。
-# stdin 是一个 JSON,含 transcript_path、session_id、cwd、hook_event_name 等。
+# SessionEnd hook 入口(文件名沿用 on-stop.sh,原本挂的是 Stop 事件,
+# 后来发现 Stop 是每轮 assistant 回复都触发,长会话被反复评分白烧钱,
+# 改挂 SessionEnd — 每个 session 只触发一次。文件名留着不动是为了不破坏现有路径)。
+# stdin 是一个 JSON,含 transcript_path、session_id、cwd、hook_event_name、reason 等。
 # 我们把 transcript_path 提出来,后台异步喂给 scan-session.js,然后立刻 exit 0。
 # 这样不阻塞用户对话退出,失败也不打扰主流程。
 

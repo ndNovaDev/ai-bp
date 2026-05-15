@@ -1,7 +1,7 @@
 {
-  "description": "会话结束后,后台异步对当前会话评分并写入 data/index.jsonl。失败静默,不阻塞退出。",
+  "description": "会话整体结束时,后台异步对当前会话评分并写入 data/index.jsonl。失败静默,不阻塞退出。注意:用 SessionEnd(整 session 1 次)而不是 Stop(每轮 1 次)— 后者会让 Haiku 评分在长会话里被每轮触发,白烧钱。/exit 斜杠退出不触发 SessionEnd(Claude Code 已知 bug #35892),用 /ai-practice-scan 兜底。",
   "hooks": {
-    "Stop": [
+    "SessionEnd": [
       {
         "matcher": "*",
         "hooks": [
