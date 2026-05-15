@@ -129,24 +129,24 @@ function loadAll() {
   return out;
 }
 
-function main() {
-  const args = parseArgs(process.argv);
-  let rows = loadAll();
-
+function applyFilters(rows, args) {
   let lo = args.since, hi = args.until;
   if (args.week) [lo, hi] = isoWeekRange(args.week);
   else if (args.month) [lo, hi] = monthRange(args.month);
 
-  if (lo) rows = rows.filter((r) => r.endedAt && r.endedAt >= lo);
-  if (hi) rows = rows.filter((r) => r.endedAt && r.endedAt < hi);
-  if (args.tag) rows = rows.filter((r) => Array.isArray(r.tags) && r.tags.includes(args.tag));
-  if (!args.full) rows = rows.filter((r) => (r.score || 0) >= args.minScore);
+  let out = rows;
+  if (lo) out = out.filter((r) => r.endedAt && r.endedAt >= lo);
+  if (hi) out = out.filter((r) => r.endedAt && r.endedAt < hi);
+  if (args.tag) out = out.filter((r) => Array.isArray(r.tags) && r.tags.includes(args.tag));
+  if (!args.full) out = out.filter((r) => (r.score || 0) >= args.minScore);
 
-  rows.sort((a, b) => (b.score || 0) - (a.score || 0));
-  rows = rows.slice(0, args.top);
+  out = out.slice().sort((a, b) => (b.score || 0) - (a.score || 0));
+  out = out.slice(0, args.top);
+  return out;
+}
 
-  // 输出精简字段(供 LLM 二次排序和 UI 展示用)
-  const out = rows.map((r) => ({
+function toSummary(rows) {
+  return rows.map((r) => ({
     sessionId: r.sessionId,
     date: (r.endedAt || '').slice(0, 10),
     score: r.score,
@@ -157,8 +157,28 @@ function main() {
     turns: r.turns,
     filesEditedCount: (r.filesEdited || []).length,
   }));
-
-  process.stdout.write(JSON.stringify(out, null, 2));
 }
+
+function main() {
+  const args = parseArgs(process.argv);
+  const rows = loadAll();
+  const filtered = applyFilters(rows, args);
+  process.stdout.write(JSON.stringify(toSummary(filtered), null, 2));
+}
+
+module.exports = {
+  isoWeekOf,
+  isoWeekRange,
+  monthRange,
+  parseRecent,
+  parseArgs,
+  applyFilters,
+  toSummary,
+  loadAll,
+  thisWeekStr,
+  lastWeekStr,
+  thisMonthStr,
+  lastMonthStr,
+};
 
 if (require.main === module) main();

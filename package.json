@@ -1,0 +1,12 @@
+{
+  "name": "ai-best-practice",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Claude Code plugin: 扫描历史会话,自动评分并生成 OKR 周报草稿",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}

@@ -1,0 +1,5 @@
+{"type":"permission-mode","sessionId":"sess-mal-01"}
+{not valid json
+{"type":"user","message":{"role":"user","content":"测试malformed 行处理"},"sessionId":"sess-mal-01","cwd":"/Users/lqy/proj-c","timestamp":"2026-05-12T08:00:00.000Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]},"sessionId":"sess-mal-01","timestamp":"2026-05-12T08:00:01.000Z"}
+{"type":"user","message":{"role":"user","content":"再问一句"},"sessionId":"sess-mal-01","timestamp":"2026-05-12T08:00:02.000Z"}

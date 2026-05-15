@@ -144,7 +144,7 @@ async function scoreCard(card) {
   return parseResult(stdout);
 }
 
-module.exports = { scoreCard, MODEL };
+module.exports = { scoreCard, MODEL, buildUserPrompt, parseResult, SCORE_SCHEMA, SYSTEM };
 
 if (require.main === module) {
   const { buildSessionCard } = require('./parse-jsonl');
