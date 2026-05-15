@@ -1,6 +1,6 @@
 {
   "name": "ai-best-practice",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "扫描 Claude Code 历史会话,挖掘 AI 最佳实践案例,自动评分并生成中文 OKR 周报草稿。",
   "author": {
     "name": "lqy"
