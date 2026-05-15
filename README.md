@@ -27,18 +27,37 @@ ai-best-practice/
 └── README.md
 ```
 
-## 安装(本机)
+## 安装
 
-放到任意目录,然后:
+仓库本身就是一个 marketplace,直接在 Claude Code 里两步装好:
 
-```bash
-claude --plugin-dir /Users/lqy/tyc/ai-best-practice
+```text
+/plugin marketplace add ndNovaDev/ai-bp
+/plugin install ai-best-practice@ai-bp
 ```
 
-启动一次后,plugin 会被识别,`/ai-practice-scan` 和 `/ai-practice-pick` 在 `/help` 里出现,
-`Stop` hook 自动生效。
+第一条把本仓库注册为 marketplace(键名 `ai-bp`),第二条安装其中的 `ai-best-practice` 插件。
+安装后:
 
-也可以把整个目录打成 zip 分发给同事,他们用 `--plugin-dir x.zip` 装。
+- `/ai-practice-scan` 和 `/ai-practice-pick` 自动出现在 `/help` 里
+- `Stop` hook 自动生效,会话结束后台异步评分入库
+
+升级到最新版:
+
+```text
+/plugin marketplace update ai-bp
+/plugin update ai-best-practice@ai-bp
+```
+
+### 本地开发模式
+
+如果你 clone 了本仓库并要直接调试代码改动:
+
+```bash
+claude --plugin-dir /path/to/ai-bp
+```
+
+或者用 `/plugin install ai-best-practice@local --source-path /path/to/ai-bp`。
 
 ## 使用
 
