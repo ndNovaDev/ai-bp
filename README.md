@@ -61,36 +61,42 @@ claude --plugin-dir /path/to/ai-bp
 
 ## 使用
 
-### 首次全量扫描
+两条 slash command 都接受**中文自然语言**。Claude 在主对话里把你的意图翻译成具体过滤条件,
+你不用记 flag 长什么样。
 
-```
-/ai-practice-scan --full
+### 首次扫描
+
+```text
+/ai-practice-scan
 ```
 
-会先打印候选数。**首次预计 10–30 分钟、$5–$15 成本**(当前约 340 个有效会话,
-4 并发约 1–1.5 小时,后台跑不阻塞)。后续都走 mtime 缓存,只评新增/变更。
+无参数 = 全量带缓存(扫所有 jsonl,首次会评所有,以后只评新增/变更)。
+**首次预计 ~340 个会话、$5–$15、40–60 分钟**(后台跑,不阻塞主对话)。
+
+也可以加范围,例如:
+
+```text
+/ai-practice-scan 最近 7 天
+/ai-practice-scan 重新评分              # 忽略缓存,所有 session 重打分
+/ai-practice-scan 重新评分最近 3 天
+```
 
 ### 日常无感:hook 自动入库
 
-什么都不用做。每次正常退出 Claude Code 会话,后台异步打分并写入 `data/index.jsonl`。
+什么都不用做。每次正常退出 Claude Code 会话,Stop hook 后台异步打分并写入 `data/index.jsonl`。
 日志在 `~/.claude/logs/ai-best-practice.log`。
 
 ### 写本周作文
 
-```
-/ai-practice-pick --week 2026-W19
-```
-
-或:
-
-```
-/ai-practice-pick                      # 全周期高分
-/ai-practice-pick --month 2026-05
-/ai-practice-pick --since 2026-05-10
-/ai-practice-pick --tag automation
+```text
+/ai-practice-pick                      # 全周期高分前 30 → 你勾选
+/ai-practice-pick 本周                  # 或 这周 / 最近一周
+/ai-practice-pick 最近三天
+/ai-practice-pick 上个月关于自动化的
+/ai-practice-pick 最近一周高分前 5 条
 ```
 
-流程:列出候选 → AI 二次排序(时效/多样/完整度) → AskUserQuestion 给你勾 1-3 条 →
+流程:列出候选 → AI 二次排序(时效/多样/完整度) → `AskUserQuestion` 给你勾 1–3 条 →
 读原始 jsonl 抽细节 → 调 Sonnet 起草 → 写入 `weekly/<range>.md`。
 
 人工检阅后提交。
@@ -100,14 +106,8 @@ claude --plugin-dir /path/to/ai-bp
 - `data/index.jsonl` 只存**元数据 + AI 生成的摘要**,**不复制原始对话内容**
 - 单条 ~1 KB,千条会话约 1 MB
 - 原文在 `~/.claude/projects/`,通过 sessionId 回查
-
-`data/`、`weekly/`、`hooks/on-stop.sh` 产生的日志可能含工作内容摘要。
-若放到 git,建议在仓库根加 `.gitignore`:
-
-```
-data/
-weekly/
-```
+- `data/` 和 `weekly/` 含工作内容摘要,**仓库已在 `.gitignore` 排除**。每个用户独立生成,
+  不进版本库。
 
 ## 环境变量
 
@@ -128,7 +128,8 @@ weekly/
 
 ## 故障排除
 
-- hook 没触发:检查 `claude` 启动时是否带 `--plugin-dir`,或把 plugin 加进 marketplace
+- hook 没触发:确认 plugin 已安装(`/plugin list` 能看到 `ai-best-practice@ai-bp`),或本地开发时启动带 `--plugin-dir`
 - 评分超时:大会话(jsonl > 500KB)可能需要把 `AIBP_SCORE_TIMEOUT_MS` 调到 300000
 - `claude -p` 返回 is_error:看 `~/.claude/logs/ai-best-practice.log` 末尾 stderr
-- 索引太少:确认 `cwd` 实际命中过滤前缀(在 jsonl 第一行 `cwd` 字段查看)
+- 索引为空:跑一次 `/ai-practice-scan`(空 index 等 hook 慢慢攒会很久)
+- 想排除某些目录:编辑 `scripts/scan.js` 顶部的 `EXCLUDE_PREFIXES` 数组
