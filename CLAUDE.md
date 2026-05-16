@@ -86,30 +86,35 @@ SessionEnd hook → hooks/on-stop.sh → scripts/scan-session.js ─┐
    (Read / Bash / grep / jq)按需取证,边看边判断"够了"就停
 2. **5a 采访补证据**:主 Claude 出 1-3 道题(LLM 看不出的事:动机、真实 ROI、备选方案、复用面),
    一次 `AskUserQuestion`(API 上限 4)收完
-3. **5b 大纲来源(强烈建议用户自带)**:一次 `AskUserQuestion` 二选一 — "我自己写大纲 (强烈推荐)" /
-   "让 Claude 先草一份"。AI 不会读心术,用户自己写 3-5 条 bullet 比 Claude 猜半天值。
-   选自带就结束当前 slash command 轮,用户下条消息发大纲后主对话续上 5d。选 Claude 草就进 5c
-4. **5c Claude 起草+确认(仅 5b 选了 Claude 草时)**:Claude 出大纲后一次 `AskUserQuestion`
-   二选一(采纳/微调)
-5. **5d 段落起草**:先把短 `STYLE_GUIDE`(3-8 行,只指方向)读进上下文,然后按大纲一行写一段,
+3. **5b 大纲(Claude 先草一份 + 一次 AskUserQuestion)**:Claude 起草后一次 `AskUserQuestion`
+   二选一 — "采纳 (推荐)" / "我有想法(Other 接受任意输入:大纲/主张/想保留的内容...)"。
+   强烈建议用户走 Option 2 给点东西 — AI 不会读心术,30 秒写一句主张比 Claude 猜半天值。
+4. **5c 段落起草**:先把短 `STYLE_GUIDE`(3-8 行,只指方向)读进上下文,然后按大纲一行写一段,
    每段 3-6 句
-6. **5e/5f Peterson 修订**:一遍砍句、一遍砍段+重排。原话"试着删掉每一句,不出问题就删"
-7. **5g 反推大纲 sanity check**:从修剪后的版本反推主题句,跟原大纲对比;差异大且事后大纲松散
-   就**回 5e/5f 循环到通过**。一次过把事情做对 — 落盘的是最终版本,不假设用户会 review
-8. **5h 落盘**:`titleToSlug` 拼 `<期号>-<slug>.md`,`Write` 写到 `~/.ai-best-practice/weekly/`
+5. **5d/5e Peterson 修订**:一遍砍句、一遍砍段+重排。原话"试着删掉每一句,不出问题就删"
+6. **5f 反推大纲 sanity check**:从修剪后的版本反推主题句,跟原大纲对比;差异大且事后大纲松散
+   就**回 5d/5e 循环到通过**。一次过把事情做对
+7. **5g 5 路 subagent 同行评审(必须通过)**:5 个并行 `Agent` (`subagent_type: "general-purpose"`)
+   分别扮 AI 审查员 / 同级同事 / 技术专家 / 公司老板 / 技术文档撰写专家。
+   收齐反馈后必改项全部应用,再过一遍 5f sanity;有评审打"不合格"就第二轮再来一次,
+   直到全员"合格 / 边缘"。$0.10-0.30 / 案例。
+8. **5h 落盘**:`titleToSlug` 拼 `<期号>-<slug>.md`,`Write` 写到 `~/.ai-best-practice/weekly/`。
+   这就是最终版本,不假设用户会再 review
 9. 单案例 H1 直接是案例名,无 H2;多案例 H1 是期号,每案 H2 是案例名
 
 **为什么换成 Peterson 写作流程 + 短 STYLE_GUIDE**:这块经历了三轮控制起草质量的尝试 ——
-**v1** 用 AUDITOR_LENS(7 条内容审计探针)+ 写作结构模板让草稿读起来像"很懂规范的 AI 写的",
+**v1** 用 AUDITOR_LENS(7 条内容审计探针)+ 写作结构模板让产出读起来像"很懂规范的 AI 写的",
 约束本身就是均值化锚点。
 **v2** 改成摸用户语气画像(从历史 jsonl 采用户真实发言)+ AI_TELLS(Wikipedia "Signs of AI
 writing" 6 类形式 tell 密度自检)。仍然不像用户写的 —— 因为聊天和写作是两种语域,采样聊天画
 出的画像本身错位;而且 AI_TELLS 是事后形式补救,救不了结构性的 AI 思考方式(从大纲到段落到
 收尾,整体气质是 LLM 的)。
 **v3(当前)** 改用 Jordan Peterson 的 Essay Writing Guide(大纲先行 → 段落 → 砍句 → 砍段
-→ 反推大纲做 sanity check),通过预设结构和修剪让作者真正想清楚。语域只剩一份**短**
-`STYLE_GUIDE`(3-8 行,只指方向,不列规则)。一旦在 STYLE_GUIDE 里列具体 do/don't 或贴示例
-就退化回 v1/v2 失败模式 —— 规则本身变成均值化锚点。`test/draft.test.js` 锁了行数上限。
+→ 反推大纲做 sanity check),通过预设结构和修剪让作者真正想清楚。落盘前必过 **5 路 subagent
+同行评审**(AI 审查员 / 同级同事 / 技术专家 / 公司老板 / 技术文档撰写专家 并行 Agent),
+保证产出能直接交付不返工。语域只剩一份**短** `STYLE_GUIDE`(3-8 行,只指方向,不列规则)。
+一旦在 STYLE_GUIDE 里列具体 do/don't 或贴示例就退化回 v1/v2 失败模式 —— 规则本身变成均值化
+锚点。`test/draft.test.js` 锁了行数上限。
 
 Key design points to preserve when modifying:
 

@@ -58,7 +58,7 @@ ${JSON.stringify(compact)}
 - 产出可分发的 plugin / 通用工具 +10
 - gitCommitsInWindowCount > 0 是"代码改动真的落地"的强证据 +15;
 - **但"无 commit ≠ 无价值"**:大量有价值的产出本来就不进 git,看 filesEditedSample 的扩展名和路径再判:
-  - 文档类(.md / .txt / .rst / wiki / 飞书 doc 草稿)— 零 commit 是常态,不扣分
+  - 文档类(.md / .txt / .rst / wiki / 飞书 doc)— 零 commit 是常态,不扣分
   - 配置类(.json / .yaml / .toml / dotfiles / Claude Code 的 skill / command / hook 文件,常在 ~/.claude/ 或 .claude-plugin/ 下)— 零 commit 是常态,不扣分
   - 个人脚本 / 一次性自动化(在 ~/scripts、/tmp、用户 home 下的脚本)— 零 commit 是常态,不扣分
   - 给别的工具用的 prompt / 模板 / agent 配置 — 零 commit 是常态,不扣分

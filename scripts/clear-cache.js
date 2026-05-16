@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 清空打分缓存(index.jsonl)。weekly/ 草稿和 logs/ 不动。
+// 清空打分缓存(index.jsonl)。weekly/ 输出和 logs/ 不动。
 // 给 /ai-practice-clear 用,不直接给人用 — 所以输出走 JSON。
 //
 // 用法:
