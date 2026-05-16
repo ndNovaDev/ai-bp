@@ -81,40 +81,47 @@ SessionEnd hook → hooks/on-stop.sh → scripts/scan-session.js ─┐
 /ai-practice-pick → scripts/list.js → lib/draft.js (buildProbePrompt → 主对话起草 → 采访 → buildFinalizePrompt → 主对话起草 → Write) → WEEKLY_DIR
 ```
 
-**起草流程完全在主对话内 agent 化驱动**(不 spawn `claude -p`,不再有 prompt 模板,也不再有内容审计探针):
+**起草流程完全在主对话内 agent 化驱动**(不 spawn `claude -p`,不再有 prompt 模板,不再有内容审计探针,也不再有 AI 味形式自检):
 1. slash command(`commands/ai-practice-pick.md`)按步描述工作流,主 Claude 用自己的工具
    (Read / Bash / grep / jq)按需取证,边看边判断"够了"就停
-2. **新加的步 5.0 — 摸语气**:从所有选中 topic 的 primary session jsonl 里采样
-   `type:user/userType:external` 的用户真实发言,在工作记忆里画一份"用户语气画像"
-   (句长、标点、中英混杂、立场强度、引代码方式、口头禅),作为后续起草的语气锚
-3. 主 Claude 在自己的下一条回复里产出 proposedTitle + 1–3 道采访题(LLM 看不出的事:
-   动机、真实 ROI、备选方案、复用面);题数越少越好,题数越多写作时塞答案的压力越大
-4. slash command **一次** `AskUserQuestion`(API 上限 4)把题一屏问完;
-   每题第一选项是 LLM 的最佳猜测,用户直接选 = 静默接受
-5. 主 Claude 基于"语气画像 + 证据 + 用户答复"直接产出 markdown,**唯一硬约束是避免 AI_TELLS**
-   (Wikipedia "Signs of AI writing" 那 6 类结构性指纹);写完按"这是不是像用户自己发的"自检
-   一遍再 `Write` 落盘
-6. 单案例 H1 直接是案例名,无 H2;多案例 H1 是期号,每案 H2 是案例名
+2. **5a 采访补证据**:主 Claude 出 1-3 道题(LLM 看不出的事:动机、真实 ROI、备选方案、复用面),
+   一次 `AskUserQuestion`(API 上限 4)收完
+3. **5b 起草大纲**:主 Claude 基于(证据 + 答复)产出大纲,一行一段主题句,5-12 行
+4. **5c 大纲确认**:一次 `AskUserQuestion` 三选项 — 采纳/重写/微调。
+   选"重写"就回一句提示并结束当前 slash command 轮,用户下条消息发新大纲后主对话里自然续上
+5. **5d 段落起草**:先把短 `STYLE_GUIDE`(3-8 行,只指方向)读进上下文,然后按大纲一行写一段,
+   每段 3-6 句
+6. **5e/5f Peterson 修订**:一遍砍句、一遍砍段+重排。原话"试着删掉每一句,不出问题就删"
+7. **5g 反推大纲 sanity check**:从修剪后的草稿反推主题句,跟原大纲对比;差异大就在报告里
+   标注但**不再循环重写**(缩水版决策)
+8. **5h 落盘**:`titleToSlug` 拼 `<期号>-<slug>.md`,`Write` 写到 `~/.ai-best-practice/weekly/`
+9. 单案例 H1 直接是案例名,无 H2;多案例 H1 是期号,每案 H2 是案例名
 
-**为什么取消 AUDITOR_LENS(内容审计 7 条探针)和写作结构模板**:实践下来这些约束让草稿读起来仍然
-像"很懂规范的 AI 写的",而不是像用户本人写的。约束本身就是均值化锚点。换成"先采样用户真实发言、
-摸出语气画像,再让主 Claude 照着画像写"之后,草稿才开始有个人指纹。AI_TELLS 保留是因为它只拦
-形式问题(否定式对仗 / 三项并列 / -ing 挂尾 / inline-header lists / outline 模具 / 向均值回归),
-跟"模仿谁"正交。
+**为什么换成 Peterson 写作流程 + 短 STYLE_GUIDE**:这块经历了三轮控制起草质量的尝试 ——
+**v1** 用 AUDITOR_LENS(7 条内容审计探针)+ 写作结构模板让草稿读起来像"很懂规范的 AI 写的",
+约束本身就是均值化锚点。
+**v2** 改成摸用户语气画像(从历史 jsonl 采用户真实发言)+ AI_TELLS(Wikipedia "Signs of AI
+writing" 6 类形式 tell 密度自检)。仍然不像用户写的 —— 因为聊天和写作是两种语域,采样聊天画
+出的画像本身错位;而且 AI_TELLS 是事后形式补救,救不了结构性的 AI 思考方式(从大纲到段落到
+收尾,整体气质是 LLM 的)。
+**v3(当前)** 改用 Jordan Peterson 的 Essay Writing Guide(大纲先行 → 段落 → 砍句 → 砍段
+→ 反推大纲做 sanity check),通过预设结构和修剪让作者真正想清楚。语域只剩一份**短**
+`STYLE_GUIDE`(3-8 行,只指方向,不列规则)。一旦在 STYLE_GUIDE 里列具体 do/don't 或贴示例
+就退化回 v1/v2 失败模式 —— 规则本身变成均值化锚点。`test/draft.test.js` 锁了行数上限。
 
 Key design points to preserve when modifying:
 
 - **Scoring 走子进程,Drafting 不走**:`lib/score.js` `spawn('claude', [...])` 跑 Haiku
   (`--bare --no-session-persistence` 防止 scorer 自己的会话被 hook 递归索引)。
-  `lib/draft.js` **不**起子进程,**不再有 prompt 模板**,**也不再有内容审计探针** —
-  它只 export 三样裸物料:`AI_TELLS`(形式审计,6 类 LLM 结构性 tell,来自 Wikipedia
-  "Signs of AI writing")、`titleToSlug`、`extractTitle`。
-  整个起草工作流(摸语气 → 取证 → 采访 → 终稿)由 `commands/ai-practice-pick.md` 描述,
-  主 Claude 在自己的上下文里 agent 化驱动 — 写之前 Read AI_TELLS 进上下文,同时从 jsonl
-  采样用户真实发言摸语气。好处:复用主会话的鉴权 + 1M context,不走 Anthropic 的
-  "长上下文 Extra Usage"计费档(否则 429)。不要把这种"主对话直起草"再退回 `claude -p`,
-  也不要把 prompt 模板或 AUDITOR_LENS 加回来 — 内容审计探针已经被证实是均值化锚点,
-  实测会让草稿读起来"像很懂规范的 AI 写的",而不是像用户本人写的。
+  `lib/draft.js` **不**起子进程,**不再有 prompt 模板**,**不再有内容审计探针**,
+  **也不再有 AI 味形式自检** — 它只 export 三样裸物料:`STYLE_GUIDE`(短风格方向锚,
+  3-8 行,只指方向不列规则)、`titleToSlug`、`extractTitle`。
+  整个起草工作流(取证 → 采访 → 大纲 → 段落 → 砍句 → 砍段 → 反推大纲 → 落盘)由
+  `commands/ai-practice-pick.md` 描述,主 Claude 在自己的上下文里 agent 化驱动 —
+  按 Jordan Peterson Essay Writing Guide 的步骤走,起草段落前读一次 STYLE_GUIDE。
+  好处:复用主会话的鉴权 + 1M context,不走 Anthropic 的"长上下文 Extra Usage"
+  计费档(否则 429)。不要把"主对话直起草"再退回 `claude -p`,也不要把 AUDITOR_LENS /
+  AI_TELLS / 摸语气画像 加回来 — 它们都已被证实是均值化锚点(见 lib/draft.js 头注的演化史)。
 - **mtime cache** in `scan.js` / `scan-session.js`: a row is skipped when
   `existing.jsonlMtime === card.jsonlMtime`. Don't break this — full re-scoring
   the author's local 346-session corpus cost ~$10, and the cache is the only

@@ -129,67 +129,20 @@ AskUserQuestion 的 options 上限是 4,所以一屏只能展示 top 4 topic。�
 
 多 topic 各自跑一次步 4。
 
-### 步 5 — 起草:摸语气 → 采访 → 写作(完全主对话 agent 化)
+### 步 5 — 起草(Peterson Essay Writing Guide 流程)
 
-起草整个工作流由你(主 Claude)亲自驱动。废除"内容审计探针 / 结构模板 / 风格示例"这套旧约束 —
-那套实际上把草稿往"很懂规范的 AI 写的"方向均值化。换成的新策略:**先从用户的真实发言里把语气画出来,
-再让自己照着画像写**。整套硬约束只剩一份 `AI_TELLS`(形式审计)。
+起草由你(主 Claude)亲自驱动。**废除"摸用户语气画像"和"AI_TELLS 形式自检"两套约束** —
+聊天和写作是两种语域,采样聊天画出的画像本身错位;AI_TELLS 是事后形式补救,救不了
+结构性的 AI 思考方式。
 
-`scripts/lib/draft.js` 提供 `titleToSlug` 算文件名 + `AI_TELLS` 一份。其余从简。
+换上 Jordan Peterson 的写作流程:**大纲先行 → 段落生成 → 砍句 → 砍段 → 反推大纲做 sanity check**。
+预设结构撬动作者把事情真想清楚,比事后形式审查有效。
 
-#### 5.0 — 摸用户语气画像(每次 pick 跑一次,所有 topic 共用)
+唯一的风格锚是一份**短** `STYLE_GUIDE`(3-8 行,只指方向),在 5d 起草段落前读一次。
 
-为什么这步是新加的第一件事:草稿要"像用户自己写的",不是"行文工整"或"信息密度高"。
-LLM 默认会向训练语料的均值回归,丢掉用户本身的语言指纹。先把用户真实发言采进上下文,
-固化语气特征,后面所有起草以此为锚。
+`scripts/lib/draft.js` 提供 `STYLE_GUIDE` + `titleToSlug` + `extractTitle`,其余从简。
 
-操作:从所有选中 topic 的 primarySessionId 找到 jsonl,采样 `type:user / userType:external`
-且不是斜杠命令、不是模板包裹的发言:
-
-```bash
-# 先从 index 拿 jsonlPath(每个 primarySessionId 各跑一次,合到一起)
-node -e '
-const fs = require("fs"), path = require("path");
-const { INDEX_PATH } = require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/paths");
-const ids = process.argv.slice(1);  // primarySessionId 列表,空格分隔
-const lines = fs.readFileSync(INDEX_PATH, "utf8").split("\n").filter(Boolean);
-for (const l of lines) {
-  const r = JSON.parse(l);
-  if (ids.includes(r.sessionId)) console.log(r.jsonlPath);
-}
-' <id1> <id2> ...
-
-# 然后对每个 jsonl 抽用户真实发言
-#   - userType=external (排掉 hook 注入)
-#   - content 是 string (排掉 tool_result 数组包裹)
-#   - 不以 < [ / 开头 (排掉 <command-name> / <local-command-caveat> / 斜杠命令)
-#   - 长度 12-400 (排掉"嗯"、"好"和超长 paste 块)
-for f in <jsonl1> <jsonl2>; do
-  grep '"type":"user"' "$f" | \
-    jq -r 'select(.userType=="external" and (.message.content|type=="string")) | .message.content' 2>/dev/null | \
-    grep -vE '^[[:space:]]*[<\[/]' | \
-    awk 'length > 12 && length < 400'
-done | head -40
-```
-
-挑 10-20 条"完整想法"的发言。在你的工作记忆里画一份**语气画像**,具体到能让别人模仿,
-至少覆盖:
-
-- **句长节奏** — 短句快切?长句铺陈?短长穿插?
-- **标点习惯** — 中文标点 / 英文标点 / 全角逗号 / 是否爱破折号 / 句末是否点号 / 是否爱省略号
-- **中英混杂程度** — 变量名、库名、术语用英文还是全译中文?
-- **立场强度** — 下结论直接还是留余地?命令式 vs "看看能不能"
-- **引代码 / 路径 / commit 的方式** — 行内代码块?反引号?裸写?
-- **高频词、口头禅** — 只列你真见到的,不硬编
-
-输出形式:你下一条回复用 3-6 条 bullet 把画像描出来,贴在对话里供后续起草锁定。
-**不要泛泛说"工程师风格"** — 越具体越好,引一两句原话当锚最强。
-
-如果采样里几乎没有用户发言或全是命令行(很多 hook / 短会话会这样),如实说一句
-"用户语气样本不足,无法画像",然后用 topic 内最长那条 firstPrompt + 用户提供的采访答复
-当兜底语气源 — 这种情况不要硬编画像。
-
-#### 5a — 出标题和采访题(按 topic)
+#### 5a — 采访补证据(按 topic)
 
 基于步 4 收集到的证据(已在你的工作记忆里),为这个 topic 在**你的下一条回复里**产出一个 fenced JSON。
 **不要再 Read / Bash / 取证** — 步 4 已经够了。
@@ -198,7 +151,6 @@ done | head -40
 
 \`\`\`json
 {
-  "proposedTitle": "会话评分流水线工程化",
   "questions": [
     {
       "question": "本次最痛的痛点是什么?",
@@ -210,71 +162,106 @@ done | head -40
 \`\`\`
 
 要求:
-- proposedTitle 是落盘文件名用的 slug 种子,简短可读即可。
-- questions **1-3 题,3 题已经偏多**。没明显问的就 1 题或不问 — 题数越多,5c 写作时把每个答案都塞进文章的压力越大。API 上限是 4,5b 会一屏压完。
+- questions **1-3 题**。没明显问的就 1 题或不问 — 题数越多,5d 起草时把每个答案都塞进文章的压力越大。AskUserQuestion 上限是 4。
 - 专问 LLM 从证据看不出的事:动机、痛点强度、被淘汰的备选、真实 ROI、复用面、走过的弯路、当时心理。
 - 每题 options 2-3 个,第一个是基于证据的最佳猜测(用户直接点 = 静默接受)。
 - header 2-4 字短标签,你按题意自取(动机/选型/坑/复盘 等)。
 - 用户秒懂的口语化中文。
 - **不要预先写正文草稿。** 采访只为补证据,不为搭脚手架。
 
-#### 5b — 采访用户(**一次** AskUserQuestion)
+紧接着把 questions 打包到一次 `AskUserQuestion` 调用,字段对应:`question` / `header` / `options`(第一个 label 加 ` (推荐)` 后缀)。
+收集 answers,严格按 questions 原顺序。用户走 Other 或跳过的 answer 就 `null`。
 
-把上一步产出的 questions 打包到一次 `AskUserQuestion` 调用,字段直接对应:`question` / `header` / `options`(第一个 label 加 ` (推荐)` 后缀)。
+#### 5b — 起草大纲
 
-收集 answers 数组,严格按 questions 原顺序。用户走 Other 或跳过的 answer 就 `null`。
+基于(步 4 证据 + 5a 答复),在下一条回复里产出大纲。**一行一段的主题句,5-12 行**(案例长度决定;
+短就 5,长就 12,不必凑数)。
 
-**多 topic**:对每个 topic 各做一次 5a + 一次 5b(**每个 topic 一屏题**),即便涵盖 N 个 session 也只问一次 — 这就是聚类的意义。
+形状(fenced 贴出来):
 
-#### 5c — 写最终 markdown
+\`\`\`
+1. 起因:hook 不可靠导致漏扫,周报素材丢
+2. 决定加 pick 启动时静默兜底,而不是修 hook
+3. 实现:scan.js 加 --recent 14d,mtime cache 兜底
+4. 验证:本周漏扫 5 个 session 全部补回
+5. 这个模式可以复用到其他"hook 不保险"的场景
+\`\`\`
 
-输入:**5.0 的语气画像** + 步 4 的证据 + 5b 的用户答复(全在工作记忆里)。
+要求:
+- 主题句直陈,不要标语化
+- 顺序就是文章段落顺序
+- 信息密度低的行直接删,宁可少一段也别凑
 
-**唯一一份硬约束:避免 AI_TELLS**。先读进上下文:
+#### 5c — 大纲确认(一次 AskUserQuestion)
 
-```bash
-node -e 'console.log(require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/draft").AI_TELLS)'
-```
+一道题,三选项:
 
-`AI_TELLS` 列了 6 类 LLM 结构性指纹(否定式对仗 / 三项并列 / -ing 挂尾 / inline-header lists /
-outline 模具 / 向均值回归)。来源 Wikipedia "Signs of AI writing"。
-判别原则:**不是"有没有",是"密度"** — 单个偶发可以,一段两个以上就重写那段。
+- "采纳 Claude 起草的大纲 (推荐)" → 直接进 5d
+- "我重写大纲(下一条消息发给我)" → 你回 "好,把大纲发我,一行一段最好",**当前 slash command 流程结束**。
+  用户下一条消息发来大纲,主对话里你看到后自然续上 5d。
+- "微调某条(Other 填修改)" → Other 字段会带回用户的具体修改指令。应用修改后进 5d。
 
-**写作目标按优先级**:
+不必再请用户验证修改后的大纲 — 已经够多 round-trip 了。
 
-1. **像用户自己写的**。5.0 画像里的特征,文章读起来能反向印出来。不是"严格复刻每条特征",
-   是"这段念出来,用户自己看也认账"。如果画像缺,用户答复里的措辞就是你能拿到的最近样本,
-   照那个味道写。
-2. **不带 AI 味**。AI_TELLS 的 6 类指纹,密度压到一段 0-1 个。
-3. **高质量**。读者(不熟悉这件事的同事)愿意读完;读完知道作者做了什么、为什么做、
-   怎么做的、值不值得。
+#### 5d — 段落起草
 
-**不预设结构**。没有 STAR,没有"开篇/结论先讲/方案演进"三段套,没有规定字数,
-没有"风格示例参考"。结构服务于这件事本身 — 短就短,长就长;一段就一段,五节就五节。
-小标题用还是不用、用什么口吻都看 5.0 画像。
+**先把 STYLE_GUIDE 读进上下文**:
 
-**写完留一遍自检**:把草稿当成是用户自己发来的,你信吗?
-- 信 → 落盘。
-- 不信 → 指出哪段最像 AI(或最不像用户),重写那段,再问一遍。直到全篇过关。
+\`\`\`bash
+node -e 'console.log(require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/draft").STYLE_GUIDE)'
+\`\`\`
 
-落盘前最后用 `Write` 写文件。路径:
+然后对大纲里**每一行**写一段。Peterson 原版建议每段 10 句,但 OKR 周报案例更紧 —
+每段 **3-6 句**。宁多勿少,5e 砍刀要砍掉的就是这些。
 
-```bash
+不要预设小标题结构 — 短就一段段平铺,长就按事件分小节,看情况定。
+
+#### 5e — 句子级砍刀(Peterson 核心)
+
+逐段重读,对每一句问:
+
+- 删了,段落还成立吗?成立就删。
+- 能换个更短/更具体的说法吗?能就换。
+- 跟前后句是否冗余?是就合并或删一个。
+
+Peterson 原话:"试着删掉每一句,看会不会出问题;不出问题就删。"
+
+#### 5f — 段落级砍刀 + 重排(Peterson 核心)
+
+对每一段问:
+
+- 删了整篇还成立吗?成立就删。
+- 顺序对吗?该挪就挪。
+- 跟相邻段有冗余吗?合并。
+
+#### 5g — 反推大纲 sanity check
+
+从修剪后的草稿反向提取每段主题句,组成"事后大纲"。跟 5b 原大纲(或用户改后的版本)对比:
+
+- 几乎一致 → 直接落盘。
+- 差异大但事后大纲更连贯 → 默认事后大纲为对,落盘。
+- 差异大且事后大纲松散 → 在 5i 报告里标注"写的时候跑题了,事后大纲跟原大纲分歧",
+  但**不再循环重写**(缩水版决策,缩短反复)。
+
+#### 5h — 落盘
+
+\`\`\`bash
 node -e '
 const path = require("path");
 const { titleToSlug } = require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/draft");
 const { WEEKLY_DIR } = require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/paths");
 console.log(path.join(WEEKLY_DIR, process.env.WEEK_PREFIX + "-" + titleToSlug(process.env.TITLE) + ".md"));
-' # TITLE=<proposedTitle 或 期号> WEEK_PREFIX=<2026-W20 或 recent-3d>
-```
+' # TITLE=<案例名 或 期号> WEEK_PREFIX=<2026-W20 或 recent-3d>
+\`\`\`
 
-`WEEK_PREFIX` 形如 `2026-W20`(直接取自时间范围,没 ISO 周时用 `recent-3d` 这种)。
+`WEEK_PREFIX` 形如 `2026-W20`(直接取自时间范围,没 ISO 周时用 `recent-3d`)。
+用 `Write` 落盘到 `~/.ai-best-practice/weekly/<期号>-<slug>.md`。
 
-#### 5d — 多 topic 情况
+#### 5i — 多 topic 情况
 
-如果用户在步 3 勾了 ≥ 2 个 topic:5.0 语气画像只跑一次(用户语气跨 topic 不变)。
-然后对每个 topic 串行跑完 步 4 + 5a + 5b(**每 topic 1 屏 4 题**)。
-所有 topic 的证据 + 用户答复都在工作记忆里之后,**一次** 5c 写一份多 topic 版的 markdown。
+如果用户在步 3 勾了 ≥ 2 个 topic:对每个 topic 各跑 5a + 5b + 5c + 5d + 5e + 5f + 5g。
+所有 topic 修订完之后,**一次** 5h 写一份多 topic 版的 markdown:H1 是期号,
+每 case H2 是案例名。
 
 单 topic 涵盖多 session 仍按单 topic 处理 — 这是一件事不是多件事,这就是聚类的意义。
 

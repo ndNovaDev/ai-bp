@@ -3,21 +3,25 @@ const assert = require('node:assert/strict');
 const {
   titleToSlug,
   extractTitle,
-  AI_TELLS,
+  STYLE_GUIDE,
 } = require('../scripts/lib/draft');
 
-// ─── AI_TELLS sanity ──────────────────────────────────────────────────
+// ─── STYLE_GUIDE sanity ──────────────────────────────────────────────
 
-test('AI_TELLS 包含 6 类结构性 tell 的关键概念', () => {
-  // 来源 Wikipedia:Signs of AI writing,核心 6 类必须都在
-  for (const keyword of ['否定式对仗', '三项并列', '挂尾', 'inline-header', 'outline', '向均值回归']) {
-    assert.match(AI_TELLS, new RegExp(keyword, 'i'), `缺少 ${keyword}`);
-  }
+test('STYLE_GUIDE 存在且很短(防止退化成均值化锚点)', () => {
+  // v3 设计:短风格方向锚,3-8 行预期。测试上限 20 行 —
+  // 防止 future-self 塞回长篇 style brief 或 do/don't 清单(那会回到
+  // AUDITOR_LENS / AI_TELLS 的失败模式:规则本身变成均值化锚点)
+  assert.equal(typeof STYLE_GUIDE, 'string');
+  const lines = STYLE_GUIDE.split('\n').length;
+  assert.ok(lines <= 20, `STYLE_GUIDE 有 ${lines} 行,超过上限 20`);
 });
 
-test('AI_TELLS 明确"不是有没有,是密度"的判别原则', () => {
-  // 这条原则是 AI_TELLS 的元规则,删了就退化成 BANNED_PHRASES
-  assert.match(AI_TELLS, /密度/);
+test('STYLE_GUIDE 不复刻 AI_TELLS / AUDITOR_LENS 的形式审计语言', () => {
+  // 这些词进了 STYLE_GUIDE 就意味着退化回 "列规则" 模式
+  for (const banned of ['密度', '否定式对仗', '挂尾', 'inline-header', '营销腔', '学术腔']) {
+    assert.doesNotMatch(STYLE_GUIDE, new RegExp(banned, 'i'), `STYLE_GUIDE 不应包含 "${banned}"`);
+  }
 });
 
 // ─── titleToSlug ──────────────────────────────────────────────────────
@@ -62,21 +66,21 @@ test('extractTitle: 没 H1 时返回 untitled', () => {
   assert.equal(extractTitle(''), 'untitled');
 });
 
-// ─── 模板已删除,确认 draft.js 不再导出它们 ──────────────────────────
+// ─── 历代约束都已删除,确认不再 export ─────────────────────────────────
 
-test('lib/draft.js 只暴露 utils 和 AI_TELLS,内容审计 / 模板 / 黑名单都删了', () => {
+test('lib/draft.js 只暴露 STYLE_GUIDE + utils, 历代约束都删了', () => {
   const draft = require('../scripts/lib/draft');
-  // 模板字符串构造函数 + JSON schema 都已废弃,起草由主 Claude 全权驱动
+  // v1: 内容审计探针 + 黑名单 + 结构模板
+  assert.equal(typeof draft.AUDITOR_LENS, 'undefined');
+  assert.equal(typeof draft.BANNED_PHRASES, 'undefined');
+  assert.equal(typeof draft.detectBanned, 'undefined');
+  // 子进程版本 prompt 构造 + schema
   assert.equal(typeof draft.buildProbePrompt, 'undefined');
   assert.equal(typeof draft.buildFinalizePrompt, 'undefined');
   assert.equal(typeof draft.PROBE_SCHEMA, 'undefined');
-  // 子进程版本的遗留更早就删了,顺手再确认一下
   assert.equal(typeof draft.proposeAndProbe, 'undefined');
   assert.equal(typeof draft.finalize, 'undefined');
   assert.equal(typeof draft.MODEL, 'undefined');
-  // BANNED_PHRASES 黑名单删了 — 重写循环换不掉等价 LLM 套话,只会多花 token
-  assert.equal(typeof draft.BANNED_PHRASES, 'undefined');
-  assert.equal(typeof draft.detectBanned, 'undefined');
-  // AUDITOR_LENS 删了 — 改成"采样用户真实发言、模仿语气"之后,内容审计约束反而成了均值化锚点
-  assert.equal(typeof draft.AUDITOR_LENS, 'undefined');
+  // v2: AI_TELLS 形式自检 — 换成预设结构 + 短 STYLE_GUIDE 后不再需要
+  assert.equal(typeof draft.AI_TELLS, 'undefined');
 });

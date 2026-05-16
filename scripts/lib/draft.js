@@ -1,70 +1,42 @@
 // 周报起草的辅助常量和工具函数。
 //
-// 这个模块**不再有 prompt 模板,也不再有内容审计约束** — 起草整个工作流
-// (摸用户语气 → 收集证据 → 采访 → 终稿)完全由主对话 Claude 自己驱动。
-// slash command 在 commands/ai-practice-pick.md 里描述工作流,主 Claude 用
-// 自己的工具(Read / Bash / grep / jq)按需做事,边看边判断"够了"。
+// 这个模块不持有 prompt 模板,不做内容审计,也不做形式自检 — 起草整个工作流
+// (取证 → 采访 → 大纲 → 段落 → 砍句 → 砍段 → 反推大纲对比 → 落盘)完全由
+// 主对话 Claude 自己驱动。slash command 在 commands/ai-practice-pick.md 描述。
 //
-// 这个文件只暴露主 Claude 用得上的两样裸物料:
-//   AI_TELLS      — 形式审计:6 类 LLM 结构性 tell(否定式对仗 / 三项并列 / -ing 挂尾 /
-//                  inline-header lists / outline 模具 / 向均值回归)
-//                  来源 Wikipedia "Signs of AI writing"
-//                  (en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing)— 不在词
-//                  层面拦截,在句法/段落层面拦截。判别原则:不是"有没有",是"密度"。
+// 这个文件只暴露三样裸物料:
+//   STYLE_GUIDE   — 短风格方向锚(3-8 行)。只指方向("按优秀技术文档/指南的标准写"),
+//                  刻意不列具体 do/don't。起草段落前主 Claude 把它读进上下文。
 //   titleToSlug   — 案例名 → 文件名 slug
 //   extractTitle  — 从 markdown 反推 H1
 //
-// 历史:之前还有一份 AUDITOR_LENS(7 条内容审计探针),配着一坨写作风格示例和结构模板
-// (开篇/结论先讲/方案演进 三段式)。实践下来这些约束让草稿读起来仍然像"很懂规范的 AI
-// 写的",而不是像用户本人写的 — 因为约束本身就是均值化的。换成"先采样用户真实发言、
-// 摸出语气画像,再让主 Claude 照着画像写"之后,草稿才开始有个人指纹。
-// AI_TELLS 保留是因为它只拦形式问题,跟"模仿谁"正交。
+// 演化史 — 这个文件经历了三轮"控制起草质量"的尝试,记下来防止 future-self 走回头路:
+//
+//   v1: AUDITOR_LENS(7 条内容审计探针) + BANNED_PHRASES(LLM 套话黑名单) +
+//       写作结构模板(开篇 / 结论先讲 / 方案演进 三段套)。
+//       问题:让草稿读起来像"很懂规范的 AI 写的"。约束本身就是均值化锚点。
+//
+//   v2: 摸用户语气画像(从历史 jsonl 采用户真实发言,画句长 / 标点 / 中英混杂 /
+//       立场强度等特征) + AI_TELLS(Wikipedia "Signs of AI writing" 6 类形式 tell
+//       的密度自检)。
+//       问题有两条:
+//       a) 摸语气错位:聊天和写作是两种语域,拿聊天采样去当文章语气锚,从根上就
+//          跟"写出像作者的文章"这个目标对不上。
+//       b) AI_TELLS 是事后形式补救:能拦"不要写'不是 X 而是 Y'",拦不住结构性的
+//          AI 思考方式(从大纲到段落到收尾,整体气质仍是 LLM)。
+//
+//   v3(当前): 预设结构而非事后审查。
+//       套 Jordan Peterson Essay Writing Guide(大纲先行 → 段落生成 → 砍句 →
+//       砍段 → 反推大纲做 sanity check),通过修剪让作者真正想清楚。
+//       语域只有一份**短** STYLE_GUIDE,3-8 行,只指方向不列规则。
+//       一旦在 STYLE_GUIDE 里列具体 do/don't 或贴示例,就回到 v1/v2 的失败模式 ——
+//       规则本身变成均值化锚点。测试里把行数上限锁死(test/draft.test.js)。
 
-const AI_TELLS = `LLM 写作有几个**结构性指纹**,密度一上来读者立刻识别"AI 写的"。即使你没用 LLM 套话词,这些**句法/段落层面的 tell** 仍然会出戏。写之前心里装着这份清单,写完读一遍数密度。
+const STYLE_GUIDE = `按"优秀技术文档 / 优秀技术指南"的标准写。
 
-来源:Wikipedia "Signs of AI writing"(WP:AIPARALLEL / WP:RO3 / WP:SUPERFICIAL / WP:AILIST 等)。
+读者是跟你同 level 的工程师同事 — 他要看的是这件事是怎么做出来的、为什么这么选、值不值。
 
-判别原则:**不是"有没有",是"密度"**。单个偶发可以,密度上来就是 tell。
-
-1. **否定式对仗(最强 tell)**:
-   "不是 X 而是 Y" / "不仅 X 还 Y" / "不只是 X 也不只是 Y" / "X 不是 Y,而是 Z"
-   人也偶尔用,但 LLM 一段一两个,密度异常。**全篇至多 1 处**。
-   反例:"不是平台级产出,但也不只是个一次性脚本"
-   写法:直接讲 — "这是个个人工具,跑得稳"。
-
-2. **三项并列(rule of three)**:
-   "形容词、形容词、形容词" 或 "短语、短语、短语"。LLM 用三项让浅薄分析显得 comprehensive。
-   **散文段落里最多 2 项**(真清单形式不限)。
-   反例:"动机、痛点强度、走过的弯路、ROI"(四项也是同结构)
-   写法:讲一两个具体的就够 — "主要看动机和痛点强度"。
-
-3. **-ing 短语挂尾(superficial analyses)**:
-   句末挂 "...,体现了 X / 凸显了 Y / 折射出 Z / 印证了 W / 标志着 V / 展现出 U / 反映出 T"。
-   **整类禁用**。陈述事实就停,不要给意义性总结。
-   反例:"...完整的 plugin / hook / marketplace 这套机制走完一遍,后面要做类似工具的成本会低不少"
-   (尾巴是个超凡拔高 — 对杠杆做 superficial analysis)
-   写法:把"成本下降多少"具体讲(N 小时 → N 分钟),或者干脆不讲。
-
-4. **Inline-header vertical lists**(\`- **关键词**: 说明文\`):
-   每条 bullet 开头加粗一个标签再写说明。这种格式本身是 LLM 指纹。
-   **散文段落里禁用**;只有真正"清单/表格类"信息才用。
-   写法:把每条的标签内化进句子开头("先做 X 因为...,然后 Y 是因为...")。
-
-5. **Outline 模具**:
-   固定的 "Challenges and Future Prospects" 收尾节(中文 "还差什么 / ROI 怎么看")。
-   模型见过太多类似语料,本能地补上这两节。
-   **没明确想清楚的不写**;宁可文章主体讲完就结束。
-
-6. **Regression to the mean(向均值回归)** — 上面 5 条的根:
-   LLM 把 specific, unusual, nuanced facts 替换成 generic, positive, important-sounding 的话。
-   反例:"OKR 周报省事" → "从'不会用'到'用了就回不去'的差别"
-        "索引到 346 个 session,扫一次约 $10" → "被严重低估的数据源"
-   写法:每写一个抽象拔高的句子,问自己 — 这能换成具体事实吗?能就换。
-
-**自检方法**(写完读一遍,主观判断,不做程序化重写):
-- 一段里 0-1 个 tell:正常,放过
-- 一段里 ≥ 2 个 tell:这段重写
-- 全文累计 ≥ 5 个 tell:整体气质是 LLM,主体段落都需要重新组织`;
+写完读一遍,问自己:把它放进我读过的最好的技术文档/指南里,丢不丢人? 不丢就过。`;
 
 function titleToSlug(title) {
   if (!title) return 'untitled';
@@ -83,7 +55,7 @@ function extractTitle(markdown) {
 }
 
 module.exports = {
-  AI_TELLS,
+  STYLE_GUIDE,
   titleToSlug,
   extractTitle,
 };
