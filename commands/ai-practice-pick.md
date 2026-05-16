@@ -6,11 +6,12 @@ allowed-tools: [Bash, Read, Write, AskUserQuestion]
 
 # ai-practice-pick
 
-把"找素材 + 写作文"全流程串起来。**默认全周期高分**;过滤条件用自然语言传。
+找素材、写作文,两件事一条流水线。默认是全周期高分;要缩范围,自然语言告诉它即可。
 
 ## 你(Claude)收到的参数
 
-`$ARGUMENTS` 是用户的**自然语言**,例如:
+`$ARGUMENTS` 透传用户原话。例子:
+
 - "本周" / "这周" / "最近一周"
 - "最近三天" / "近 3 天" / "过去 72 小时"
 - "上个月" / "5 月份关于自动化的"
@@ -21,7 +22,7 @@ allowed-tools: [Bash, Read, Write, AskUserQuestion]
 
 ### 步 0 — 解析自然语言为脚本 flag
 
-你自己想清楚(无需调 LLM),把用户输入转成下表里的 flag 组合:
+查表即可。无需 LLM。
 
 | 用户说 | 你解析为 |
 |---|---|
@@ -36,19 +37,17 @@ allowed-tools: [Bash, Read, Write, AskUserQuestion]
 | 高分的 | `--min-score 80` |
 | 前 N 条 | `--top N` |
 
-多意图叠加,例如"上个月关于自动化的高分 5 条" → `--last-month --tag automation --min-score 80 --top 5`。
+意图可叠加。"上个月关于自动化的高分 5 条"拼出来就是 `--last-month --tag automation --min-score 80 --top 5`。
 
 ### 步 0.5 — 静默 scan 兜底(必跑)
 
-hook 不可靠(关窗、`/exit`、强杀都会漏触发 SessionEnd),所以 pick 启动时**先静默扫一遍最近 14 天**,
-让漏网的 session 自动补索引。带 mtime cache,已索引的全跳过,基本不花钱。
+hook 不可靠。关窗、`/exit`、强杀都会让 SessionEnd 漏掉。因此 pick 一开始先把最近 14 天静默扫一遍,漏网的 session 顺手补上索引。mtime cache 在,扫到旧条目直接跳过,几乎不花钱。
 
 ```bash
 node ${CLAUDE_PLUGIN_ROOT}/scripts/scan.js --recent 14d
 ```
 
-让它跑完(通常 < 30 秒,新 session 多就久一点)。报错或超时不要紧 — 索引主体已经在,可以继续步 1。
-**不要**跟用户解释这步,跑完直接往下走。
+正常半分钟内跑完。新 session 多就久一点。报错或超时无碍,索引主体还在,继续步 1。这一步不向用户解释。
 
 ### 步 1 — 拉候选粗排
 
@@ -56,22 +55,17 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/scan.js --recent 14d
 node ${CLAUDE_PLUGIN_ROOT}/scripts/list.js <你解析出的 flag>
 ```
 
-返回 JSON 数组(按 score 降序的前 N 条)。空数组 → 告知用户"无候选,可能需要先 `/ai-practice-scan` 或放宽过滤",停止。
+脚本回一个 JSON 数组,按 score 倒序,前 N 条。空数组意味着没有候选;告诉用户"无候选,可能需要先 `/ai-practice-scan` 或放宽过滤",到此为止。
 
 ### 步 2 — 你(主 Claude)自己聚类 + 重排
 
-**不开子进程,不调 Haiku**。步 1 输出的候选 JSON 顶多几十 KB,你直接读进上下文,
-在下一条回复里产出一个 fenced JSON code block — 同时做两件事:
+不开子进程,不调 Haiku。候选 JSON 顶多几十 KB,塞进上下文绰绰有余。下一条回复里贴一个 fenced JSON code block,顺手完成两件事。
 
-1. **聚类**:把同一件事的多个 session 合成一个 topic。
-   信号综合看 summary/tags/cwd/highlights — 不要硬编码"同 cwd 即同 topic"
-   (同仓库的不同 feature 应分开;不同仓库的同类工具迭代反而该合)。
-   为什么聚类:用户视角里"一件事"才是一等公民。比如 ai-best-practice 工具自身的 4 次迭代 session,
-   应该合成一个 topic 让用户挑,而不是把 4 个高度相似的候选都摆出来。
-2. **排序**:按"作为 OKR 周报案例的合适度"给 topic 排名(rank=1 最好),
-   理由考虑时效、tag 多样性、故事完整度、产物可分发性。
+**聚类**。同一件事的多个 session 合并到一个 topic 里。判断信号来自 summary、tags、cwd、highlights 的组合,不能硬编码"同 cwd 即同 topic"。同仓库的不同 feature 必须分开;反过来,不同仓库的同类工具迭代倒是该合。为什么聚类?用户视角里"一件事"才是一等公民。举例:这个工具自身的 4 次迭代会话,合成一个 topic 让用户挑,远比把 4 条高度相似的候选都摆出来要好。
 
-形状(在你的回复里贴出来,后续步骤直接引用):
+**排序**。按"作为 OKR 周报案例的合适度"给 topic 排名,rank=1 最好。打分时综合时效、tag 多样性、故事完整度、产物可分发性。
+
+输出形状如下,后续步骤直接引用:
 
 \`\`\`json
 {
@@ -87,66 +81,51 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/list.js <你解析出的 flag>
 }
 \`\`\`
 
-要求:
-- title 8-20 字,概括"这件事"而非某次会话。
-- primarySessionId 选信息最完整 / score 最高的那条。
-- reason ≤ 30 字,聚合理由 + 排序理由各一句。
-- 按 rank 升序保留前 8 个 topic;明显独立的事不要硬塞一起。
+具体要求:
 
-为什么不调 Haiku:步 5 起草已经在主对话内做,步 2 也是纯 JSON→JSON 判断,
-没必要再走一次 \`claude -p\` 子进程(子进程那条路有 schema 校验坑、1M context 计费档、冷启动)。
-省一次冷启动 + 省一次实金 + 你的判断比 Haiku 强。
+- title 8-20 字,描述事件,不是某次会话。
+- primarySessionId 选信息最完整或 score 最高的那条。
+- reason 不超过 30 字,聚合理由一句、排序理由一句。
+- 按 rank 升序,保留前 8 个。明显独立的事项不要硬塞一起。
 
 ### 步 3 — 用户挑 topic
 
-用 **AskUserQuestion** (`multiSelect: true`) 把 top topic 呈现:
-- label: `[最高分 88|涵盖 4 session] 企业级 AI 评分系统四层架构`
-  - 最高分取 topic 内 max(session.score),session 数取 sessionIds.length
-- description: AI 的 reason(聚合理由 + 排序理由)+ 一句涵盖范围(日期跨度)
-- 用户勾 1-3 个 topic
+通过 **AskUserQuestion**(`multiSelect: true`)呈现 top topic。
 
-AskUserQuestion 的 options 上限是 4,所以一屏只能展示 top 4 topic。如果用户都不满意,再展示下一屏(5-8)。
-**不要**把同一个 topic 里的多个 sessionId 拆成多个选项 — 那就是这次重构的反面。
+- label 形如 `[最高分 88|涵盖 4 session] 企业级 AI 评分系统四层架构`。其中最高分取 topic 内 max(session.score),session 数取 sessionIds.length。
+- description 写 AI 的 reason(聚合理由 + 排序理由),后面接一句涵盖范围(日期跨度)。
+- 用户从中勾选 1-3 个。
+
+AskUserQuestion 一屏最多 4 个选项。所以一次只展示 top 4;用户都不满意,翻下一屏(5-8)。同一 topic 内的多个 sessionId 不要拆成多个选项。
 
 ### 步 4 — 你(主 Claude)自己取证
 
-**不要预先组装一份大 JSON 证据包再喂给自己** — 那是旧设计的遗留,会让一份 80-150KB 的证据原样进 prompt
-两次(probe + finalize),又慢又烧 token。
+逐个处理选中的 topic。手头有 sessionIds 和元数据,用自己的工具按需收集证据。叙事对象是事件,产物比对话重要。看到能下笔了就停。
 
-改成 agent workflow:对**每个**选中的 topic,你拿着 topic.sessionIds 和元数据,
-**用你自己的工具按需收集证据,边看边判断"够了"就停**。叙事对象是事件,产物 > 对话。
+清单仅供参考,不必按顺序、不必全跑。视 topic 性质自选。
 
-下面是你应该考虑的取证清单(不是必须按顺序、不是必须全跑;根据 topic 性质自己挑):
+- **session 元数据**。从 `~/.ai-best-practice/data/index.jsonl` 按 sessionIds grep 出对应行,合并 tags / tools / skills / mcpServers / filesEdited;时间窗取 `[min(startedAt), max(endedAt)]`。
+- **git 证据(优先级最高)**。进入 session 的 cwd,先 `git log --since=<起> --until=<止> --oneline` 扫一眼。挑跟 topic 标题或 tags 最相关的 1-3 个 commit,跑 `git show --stat <hash>` 看变更概览。stat 不足以判断意图时,才动 `git show --patch` 翻 diff 原文;且只看你怀疑的那个文件(`git show <hash> -- <file>`),整块 patch 不要。
+- **artifact 原文**。filesEdited 合并完后挑 1-3 个最能说明问题的文件(.md 或关键代码),`Read` 即可,一次最多 200 行(用 offset/limit 参数,不要整文件读)。够了停。
+- **对话流水**。默认跳过。只有当 git 与 artifact 都解释不了作者动机时,才回头 Read 对应 sessionId 的 jsonl 文件,头 40 行加尾 40 行(`head -n 40` + `tail -n 40`)。
 
-- **session 元数据**:从 `~/.ai-best-practice/data/index.jsonl` 把 topic.sessionIds 对应的行 grep 出来,合并 tags / tools / skills / mcpServers / filesEdited,推算时间窗 `[min(startedAt), max(endedAt)]`。
-- **git 证据(优先级最高)**:进入 session 的 cwd,跑 `git log --since=<起> --until=<止> --oneline`;挑跟 topic 标题/tags 最相关的 1-3 个 commit 跑 `git show --stat <hash>` 看变更概览;**只有当 stat 不足以判断意图时**才去 `git show --patch` 看 diff 原文,且只看你怀疑的那个文件(`git show <hash> -- <file>`),不要拉整个 patch。
-- **artifact 原文**:从合并后的 filesEdited 挑 1-3 个最能说明问题的文件(.md / 关键代码),`Read` 看 — 限制每次 ≤ 200 行(用 offset/limit 参数,不要读整文件);看够就停。
-- **对话流水**:**默认跳过**。仅当 git + artifact 都没解释清楚作者动机时,才 Read 某个 sessionId 对应的 jsonl 文件头 40 行 + 尾 40 行(用 `head -n 40` + `tail -n 40`)。
+判断"够了"的标准:动机—方案—得失都能讲清楚。不追求覆盖所有证据,追求够下笔。
 
-判断"够了":你能说清这件事的"动机—方案—得失",就停。不追求"覆盖所有证据",追求"足够下笔"。
+取证过程不要复述文件原文,不要做信息搬运。脑子里有就行。起草直接用。
 
-收集过程你**不要**把每个文件原文复述出来,**不要**做信息搬运 — 你的工作记忆里有就行,下一步起草直接用。
-
-多 topic 各自跑一次步 4。
+多个 topic 各自跑一遍步 4。
 
 ### 步 5 — 起草 + 评审(Peterson 流程 + 5 路 subagent 同行评审)
 
-起草由你(主 Claude)亲自驱动。**废除"摸用户语气画像"和"AI_TELLS 形式自检"两套约束** —
-聊天和写作是两种语域,采样聊天画出的画像本身错位;AI_TELLS 是事后形式补救,救不了
-结构性的 AI 思考方式。
+起草由主 Claude 全程负责。流程是一条线:大纲先行、段落生成、砍句、砍段、反推大纲做 sanity check、5 路 subagent 同行评审、落盘最终版本。前半段靠预设结构把事情想透,后半段靠并行 peer review 兜住主对话自查不出的低质量。
 
-换上 Jordan Peterson 的写作流程:**大纲先行 → 段落生成 → 砍句 → 砍段 → 反推大纲做 sanity
-check → 5 路 subagent 同行评审 → 落盘最终版本**。预设结构撬动作者把事情真想清楚,然后
-5 路并行 peer review 保证落盘前没有"主对话自查不出的低质量",一次过把事情做对。
+风格只剩一份**短** `STYLE_GUIDE`(3-8 行,指方向,不列规则)。5c 开始写段落之前读一次。
 
-唯一的风格锚是一份**短** `STYLE_GUIDE`(3-8 行,只指方向),在 5c 起草段落前读一次。
-
-`scripts/lib/draft.js` 提供 `STYLE_GUIDE` + `titleToSlug` + `extractTitle`,其余从简。
+`scripts/lib/draft.js` 导出三样:`STYLE_GUIDE`、`titleToSlug`、`extractTitle`。
 
 #### 5a — 采访补证据(按 topic)
 
-基于步 4 收集到的证据(已在你的工作记忆里),为这个 topic 在**你的下一条回复里**产出一个 fenced JSON。
-**不要再 Read / Bash / 取证** — 步 4 已经够了。
+步 4 收的证据已在工作记忆里。这步基于它们,直接在下一条回复里产出 fenced JSON。**不要回去 Read / Bash / 取证**。该收的已经收够。
 
 形状:
 
@@ -162,21 +141,21 @@ check → 5 路 subagent 同行评审 → 落盘最终版本**。预设结构撬
 }
 \`\`\`
 
-要求:
-- questions **1-3 题**。没明显问的就 1 题或不问 — 题数越多,5c 起草时把每个答案都塞进文章的压力越大。AskUserQuestion 上限是 4。
-- 专问 LLM 从证据看不出的事:动机、痛点强度、被淘汰的备选、真实 ROI、复用面、走过的弯路、当时心理。
-- 每题 options 2-3 个,第一个是基于证据的最佳猜测(用户直接点 = 静默接受)。
-- header 2-4 字短标签,你按题意自取(动机/选型/坑/复盘 等)。
-- 用户秒懂的口语化中文。
-- **不要预先写正文段落。** 采访只为补证据,不为搭脚手架。
+约束:
 
-紧接着把 questions 打包到一次 `AskUserQuestion` 调用,字段对应:`question` / `header` / `options`(第一个 label 加 ` (推荐)` 后缀)。
-收集 answers,严格按 questions 原顺序。用户走 Other 或跳过的 answer 就 `null`。
+- questions 控制在 **1-3 题**。明显没什么可问就 1 题或不问。题数越多,5c 起草时把每个答案塞进文章的压力越大。AskUserQuestion 硬上限是 4。
+- 专问 LLM 从证据看不出来的事:动机、痛点强度、被淘汰的备选、真实 ROI、复用面、走过的弯路、当时心理。
+- 每题 options 2-3 个。第一个写基于证据的最佳猜测;用户直接点 = 静默接受。
+- header 自取一个 2-4 字短标签,贴题意(动机/选型/坑/复盘 等)。
+- 中文要口语化,用户瞄一眼即懂。
+- 不要预先写正文段落。采访是补证据,不是搭脚手架。
+
+将 questions 一次性打包到 `AskUserQuestion`,字段对应:`question` / `header` / `options`(第一个 label 后面加 ` (推荐)`)。
+answers 收上来后按 questions 原顺序对齐。用户走 Other 或跳过的,answer 置 `null`。
 
 #### 5b — 大纲(Claude 先草一份 + 一次 AskUserQuestion 收用户输入)
 
-基于(步 4 证据 + 5a 答复),在下一条回复里产出一份起草大纲。一行一段主题句,**5-12 行**
-(案例长度决定;短就 5,长就 12,不必凑数)。形状(fenced 贴出来):
+证据(步 4)+ 答复(5a)凑齐,下一条回复里直接草大纲。一行一段主题句,**5-12 行**之间。案例短就 5 行,长就 12 行,不必凑数。形状(fenced 贴出来):
 
 \`\`\`
 1. 起因:hook 不可靠导致漏扫,周报素材丢
@@ -187,70 +166,60 @@ check → 5 路 subagent 同行评审 → 落盘最终版本**。预设结构撬
 \`\`\`
 
 要求:
-- 主题句直陈,不要标语化
-- 顺序就是文章段落顺序
-- 信息密度低的行直接删,宁可少一段也别凑
 
-然后**一次** `AskUserQuestion`,二选一:
+- 主题句直陈。不要标语化。
+- 排出来的顺序就是文章段落顺序。
+- 信息密度低的行直接砍。宁可少一段,不要凑。
+
+然后一次 `AskUserQuestion`,二选一:
 
 - "采纳 (推荐)" → 直接进 5c
 - "我有想法 / 改动(在 Other 里告诉我:大纲、主张、想说的话、想保留的内容、重点是 X、删 X 段...都行)"
-  → 应用 Other 里的内容(扩写 / 替换 / 嵌入大纲),进 5c
+  → 把 Other 里的内容吃进来(扩写 / 替换 / 嵌入大纲),进 5c
 
-**强烈建议用户走 Option 2 给点东西**(就算只是一句"重点要 X"或"删 X 那段"):
-Claude 不会读心术。它能从证据拼出"你做了什么",但**不知道**你想突出哪条线、想给读者什么 take-away。
-30 秒写一句主张比 Claude 猜半天更值。Option 2 的 Other 字段**接受任意内容** ——
-完整大纲、几个 bullet、一句指令、想保留的具体段落都行,**怎么轻松怎么来**。
-
-(无第三选项 — Other 已经覆盖所有自由输入场景。)
+强烈推荐用户走 Option 2。哪怕只是一句"重点要 X"或"删 X 那段",都比什么都不给强。Claude 不会读心术 — 从证据它能拼出"你做了什么",但不知道你想突出哪条线、想让读者带走什么。Option 2 的 Other 字段什么都收:完整大纲、几个 bullet、一句指令都行。
 
 #### 5c — 段落起草
 
-**先把 STYLE_GUIDE 读进上下文**:
+先把 STYLE_GUIDE 读进上下文:
 
 \`\`\`bash
 node -e 'console.log(require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/draft").STYLE_GUIDE)'
 \`\`\`
 
-然后对大纲里**每一行**写一段。Peterson 原版建议每段 10 句,但 OKR 周报案例更紧 —
-每段 **3-6 句**。宁多勿少,5d 砍刀要砍掉的就是这些。
+照着大纲一行写一段。每段 **3-6 句**。宁多勿少;反正 5d 拿砍刀回来收拾。
 
-不要预设小标题结构 — 短就一段段平铺,长就按事件分小节,看情况定。
+不必预设小标题结构。短就一段段平铺过去。长就按事件分小节。看情况办。
 
-#### 5d — 句子级砍刀(Peterson 核心)
+#### 5d — 句子级砍刀
 
-逐段重读,对每一句问:
+逐段重读,每句过一遍:
 
 - 删了,段落还成立吗?成立就删。
-- 能换个更短/更具体的说法吗?能就换。
-- 跟前后句是否冗余?是就合并或删一个。
+- 有更短、更具体的说法吗?有就换。
+- 跟前后句重复了吗?合并,或删一个。
 
-Peterson 原话:"试着删掉每一句,看会不会出问题;不出问题就删。"
+#### 5e — 段落级砍刀 + 重排
 
-#### 5e — 段落级砍刀 + 重排(Peterson 核心)
+每段问一遍:
 
-对每一段问:
-
-- 删了整篇还成立吗?成立就删。
+- 整段删了,文章还成立吗?成立就删。
 - 顺序对吗?该挪就挪。
-- 跟相邻段有冗余吗?合并。
+- 跟相邻段冗余吗?合并。
 
 #### 5f — 反推大纲 sanity check(必须通过)
 
-从修剪后的版本反向提取每段主题句,组成"事后大纲"。跟 5b 大纲对比:
+从修剪后的版本反向提取每段主题句,组成"事后大纲"。跟 5b 大纲比对:
 
-- 几乎一致 → 通过,进 5g 评审。
-- 差异大但事后大纲更连贯 → 通过(说明写的过程中真想清楚了,这是 Peterson 流程的预期效果)。
-- 差异大且事后大纲松散 → **回 5d/5e 重新组织段落,循环到通过**。一次过把事情做对 ——
-  落盘的是最终版本,不要把质量问题留到落盘后让用户 review。AI 不会读心术,用户也不会逐字校对。
+- 几乎一致 → 通过,进 5g。
+- 差异大但事后大纲更连贯 → 通过。说明写的过程中真想清楚了。
+- 差异大且事后大纲散 → 回 5d/5e 重新组织段落,循环到通过。
 
 #### 5g — 5 路 subagent 同行评审(必须通过)
 
-落盘前必须经过 5 路 peer review。每路独立 `Agent` 调用(`subagent_type: "general-purpose"`),
-**5 个 Agent 在同一条 message 里并行发出**(同一 tool block 多个 tool_use),
-各自只看你给它的文章全文 + 它的角色 prompt,返回结构化反馈。
+落盘前必须过 5 路 peer review。每路一个独立 `Agent` 调用(`subagent_type: "general-purpose"`),**5 个 Agent 必须在同一条 message 里并行发出**(一个 tool block 多个 tool_use)。每路只看你给的文章全文 + 它自己的角色 prompt,返回结构化反馈。
 
-5 路角色:
+5 路角色分工:
 
 | # | 角色 | 关注 |
 |---|---|---|
@@ -260,7 +229,7 @@ Peterson 原话:"试着删掉每一句,看会不会出问题;不出问题就删�
 | 4 | **公司老板**(VP / CEO 视角) | ROI 在哪?复用面有多大?业务影响讲清楚了吗? |
 | 5 | **技术文档撰写专家** | 结构合理吗?扫读性 OK 吗?段落-句子层级清晰吗? |
 
-每个 Agent 的 prompt 模板(把 `<ARTICLE>` 替换成你修订后的全文):
+每个 Agent 的 prompt 模板(把 `<ARTICLE>` 换成你修订后的全文):
 
 \`\`\`
 你是一位[角色],[一句话能力定位]。
@@ -285,24 +254,36 @@ Peterson 原话:"试着删掉每一句,看会不会出问题;不出问题就删�
 不要复述文章内容。不要展开赞美。聚焦你这个角色最该提的问题。
 \`\`\`
 
-5 路并行发完,收齐反馈后,你(主对话)做以下处理:
+并行 5 路发完、反馈收齐之后,主对话走以下 6 步:
 
-1. **合并去重**: 不同角色提了类似问题就合并
-2. **按严重度排序**: 必改在前,可选在后
-3. **必改全部应用**: 回 5c/5d/5e 重写对应段落或句子
-4. **可选挑 0-2 条最关键的应用**
-5. 修完后**再过一遍 5f 反推大纲 sanity check**(防止改出新的结构问题)
-6. 如果有评审认为整体"不合格" → 必改完之后,**再发一次第二轮 5 路评审**,直到全员"合格 / 边缘"为止
+1. **合并去重**。不同角色提了类似问题,合并。
+2. **按严重度排序**。必改在前,可选在后。
+3. **必改全部应用**。回 5c/5d/5e 重写对应段落或句子。
+4. **可选挑 0-2 条最关键的应用**。
+5. 改完之后再过一次 5f 反推大纲 sanity check,防止改出新的结构问题。
+6. 任何一路打了"不合格" → 必改应用完之后,再发第二轮 5 路评审。一直到全员"合格 / 边缘"为止。
 
-为什么这步必须做:Peterson 流程能让作者把事情想清楚,但主对话有自己的盲区
-(过度自信、AI 味的形式 tell、面向同事的实用价值判断、面向老板的 ROI 判断、技术深度审查
-等都不是主对话的强项)。5 路并行 subagent 提供 5 个独立视角,且每路 subagent 互不知道
-其它路反馈,降低 echo chamber 风险。
+#### 5h — 句式打散(必须做)
 
-成本估算:5 路并行,每路输入 ~1-2K + 输出 ~400,合起来 ~$0.10-0.30 / 案例。
-跟"产出能直接交付不返工"比,这成本不值一提。
+5g 通过之后,内容已经够好,但句式大概率还在趋同 — 一致的破折号、相近的句长、相同的起头方式。这些是 AI 文本最稳的几个 tell。这一步只动表层,不动事实。
 
-#### 5h — 落盘(最终版本)
+要点:**逐句随机重写**,不是逐句套规则。每个句子独立掷骰 — 改不改、改哪个维度、换成什么形式,全部随机来,不要按固定流程批量处理。判断做对了的反向标准:如果整篇打散完之后能从你的改写动作里反推出一条 SOP,就说明做坏了,推倒重来。
+
+可用的变换维度(随机池,**不是**检查清单):
+
+- **句长**:压成 5-10 字的短句,或合并相邻句子成 30+ 字的复句,或不变。
+- **起头**:条件前置 / 状语前置 / 命名式("**X**。") / 举例式("举例:") / 主语开头 / 不变。
+- **标点**:破折号 ↔ 句号、冒号、括号互换。一段里同向操作别超过两处。
+- **修饰**:删冗余副词,或反过来,加一个能落地的限定词。
+- **同义改写**:"X 是 Y" / "Y 即 X" / "X 用于 Y" / 动词化,任挑一种。
+
+参照样本是 Wikipedia 词条、技术手册、参考文档。这类文本读起来不像一支笔一口气写完 — 句长、起头、连接逻辑都在自然抖动。
+
+两条硬约束。第一,事实不能改;某次替换让原意偏了就撤回。第二,不能撤销 5g 必改;某次改写退回到 5g 修过的 AI 味写法,撤回。
+
+打散完直接进 5i。表层改动不动结构,不必再过 sanity check。
+
+#### 5i — 落盘(最终版本)
 
 \`\`\`bash
 node -e '
@@ -313,32 +294,22 @@ console.log(path.join(WEEKLY_DIR, process.env.WEEK_PREFIX + "-" + titleToSlug(pr
 ' # TITLE=<案例名 或 期号> WEEK_PREFIX=<2026-W20 或 recent-3d>
 \`\`\`
 
-`WEEK_PREFIX` 形如 `2026-W20`(直接取自时间范围,没 ISO 周时用 `recent-3d`)。
-用 `Write` 落盘到 `~/.ai-best-practice/weekly/<期号>-<slug>.md`。
+`WEEK_PREFIX` 长得像 `2026-W20`,直接从时间范围里取。没 ISO 周时退回 `recent-3d`。然后 `Write` 落盘到 `~/.ai-best-practice/weekly/<期号>-<slug>.md`。
 
-**这就是最终版本**。落盘前 5c-5f 应该已经把质量问题解决完,5g 5 路 peer review 也已通过 ——
-段落写完整 / 砍句砍段做扎实 / 反推大纲 sanity OK / 5 路评审无必改项。
-不要假设用户会再 review,假设你写完就直接交付。
+写出去就是最终版本。不假设用户会再 review。
 
-#### 5i — 多 topic 情况
+#### 5j — 多 topic 情况
 
-如果用户在步 3 勾了 ≥ 2 个 topic:对每个 topic 各跑 5a + 5b + 5c + 5d + 5e + 5f。
-所有 topic 段落都修订完之后,**一次** 5g 5 路评审(让 reviewer 看完整的多 topic 文章,
-不要逐 topic review),再**一次** 5h 写一份多 topic 版的 markdown:H1 是期号,
-每 case H2 是案例名。
+用户在步 3 勾了 ≥ 2 个 topic 的情况下,每个 topic 各自跑一遍 5a + 5b + 5c + 5d + 5e + 5f。所有 topic 段落修订完之后,一次性跑 5g 5 路评审 — reviewer 看完整的多 topic 文章,不要逐 topic 评。评审整改完之后再统一跑一次 5h 句式打散。最后一次 5i 写多 topic 版的 markdown:H1 是期号,每 case H2 是案例名。
 
-单 topic 涵盖多 session 仍按单 topic 处理 — 这是一件事不是多件事,这就是聚类的意义。
+单 topic 涵盖多 session 仍按单 topic 处理。这是一件事,不是多件事。聚类的意义就在这。
 
 ### 步 6 — 报告
 
-- 输出文件路径
-- 未选中的 topic(下次可用),每条标一下涵盖几个 session
+- 输出文件路径。
+- 没选上的 topic(下次还能用),每条标上涵盖几个 session。
 
-输出落在 `~/.ai-best-practice/weekly/`(可用 `AIBP_DATA_DIR` 覆盖),
-不在插件目录里,插件升级不会丢历史输出。
-
-**关于成本**:起草现在在主对话进行,所以不再单独报"起草 cost" — 它直接计入你这个主会话的 token 用量。
-如果用户问,可以告诉他:"终稿在当前对话里写的,没有起子进程,token 用量看 `/cost`"。
+输出落在 `~/.ai-best-practice/weekly/`。想换地方用 `AIBP_DATA_DIR` 覆盖。这个路径不在插件目录里,所以插件升级不会丢历史输出。
 
 ## 内部脚本支持的 flag(供你拼接)
 
