@@ -1,37 +1,24 @@
 // 周报起草的辅助常量和工具函数。
 //
-// 这个模块**不再有 prompt 模板** — 起草整个工作流(收集证据 → 采访 → 终稿)
-// 完全由主对话 Claude 自己驱动。slash command 在 commands/ai-practice-pick.md
-// 里描述工作流,主 Claude 用自己的工具(Read / Bash git)按需收集证据,
-// 边看边判断"够了"。
+// 这个模块**不再有 prompt 模板,也不再有内容审计约束** — 起草整个工作流
+// (摸用户语气 → 收集证据 → 采访 → 终稿)完全由主对话 Claude 自己驱动。
+// slash command 在 commands/ai-practice-pick.md 里描述工作流,主 Claude 用
+// 自己的工具(Read / Bash / grep / jq)按需做事,边看边判断"够了"。
 //
-// 这个文件只暴露主 Claude 用得上的"裸物料",分两类 lens:
-//   AUDITOR_LENS  — 内容审计:7 条探针(真实性 / 难度 / 成熟度 / 沉淀 / 杠杆 / 诚实 / 完整度)
+// 这个文件只暴露主 Claude 用得上的两样裸物料:
 //   AI_TELLS      — 形式审计:6 类 LLM 结构性 tell(否定式对仗 / 三项并列 / -ing 挂尾 /
 //                  inline-header lists / outline 模具 / 向均值回归)
+//                  来源 Wikipedia "Signs of AI writing"
+//                  (en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing)— 不在词
+//                  层面拦截,在句法/段落层面拦截。判别原则:不是"有没有",是"密度"。
 //   titleToSlug   — 案例名 → 文件名 slug
 //   extractTitle  — 从 markdown 反推 H1
 //
-// 假想敌:公司内部的"AI 最佳实践审计 AI",它从全公司每周成百上千份提交里挑真金,
-// 不奖励"会写报告的人"。见 AUDITOR_LENS。AI_TELLS 来自 Wikipedia "Signs of AI writing"
-// (en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing)— 不在词层面拦截,在句法/段落
-// 层面拦截,所以才需要跟 AUDITOR_LENS 平级独立 export。
-
-const AUDITOR_LENS = `你写的这份周报会被一个独立的"AI 最佳实践审计 AI"逐条评估。它的 7 条探针你必须心里有数:
-1. 真实性:它在找编造痕迹、套话、空 artifact,以及 **generic positive language**(向均值回归 — 用抽象拔高替换具体事实,例:"被严重低估的数据源"、"用了就回不去"这类)。引用具体 commit hash / sessionId / 文件路径 / 数字(扫了 N 个 session 花了 $X、迭代 M 次),但不复述其内容。形式层面的反向均值回归见 AI_TELLS 第 6 条。
-2. 问题难度:它会识破伪需求("自动化打开文档"那种)。用"如果不做会怎样"的反事实交代代价(时间/质量/重复劳动)。
-3. AI 协作成熟度:它在判断作者是"把 AI 当聊天"还是"把 AI 当工程师"。要让叙事里自然出现 plan → 分解 → 工具编排 → 验证的链路,不要强调"我让 AI 做了 X"。
-4. 沉淀深度:它在区分一次性脚本和可分发 artifact。是否产出 plugin / skill / hook / 文档,且别人能直接复用。
-5. 杠杆:它在找这次产出对未来工作的复利。一两句点到"下次类似场景的边际成本",不画饼,只指出机制。
-6. 成本诚实度:它对虚报 ROI、口号化收益敏感。量化项老老实实写区间或"未量化",不编百分比。
-7. 故事完整度:它会扣**伪完整**的分 — 为了凑结构把 R(结果)编出来、把 T(任务)拔高、给"本次未做"也填一段,这些比塌方更糟。这次有什么写什么,没量化老老实实写"未量化",根本没做的部分不要出现在文章里。STAR 不是必须的结构,只是一个"想清楚没"的检查清单。
-
-写作风格要求:
-- 论文级:每句话能被审计 AI 单独抠出来评估,经得起推敲。
-- 平实白话,主体写散文段落而不是 bullet 列表。
-- 中文表达,避免翻译腔。不要"使用了 X 工具"、"调用了 Y"、"通过 X 完成 Y" 这种 LLM 句式。
-- 隐性表达成熟度和杠杆,不要喊口号。"未来这件事的边际成本从 N 小时变成 N 分钟"比"极大地提升了效率"强。
-- 不用 emoji。不用独立的 \`---\` 分隔线。`;
+// 历史:之前还有一份 AUDITOR_LENS(7 条内容审计探针),配着一坨写作风格示例和结构模板
+// (开篇/结论先讲/方案演进 三段式)。实践下来这些约束让草稿读起来仍然像"很懂规范的 AI
+// 写的",而不是像用户本人写的 — 因为约束本身就是均值化的。换成"先采样用户真实发言、
+// 摸出语气画像,再让主 Claude 照着画像写"之后,草稿才开始有个人指纹。
+// AI_TELLS 保留是因为它只拦形式问题,跟"模仿谁"正交。
 
 const AI_TELLS = `LLM 写作有几个**结构性指纹**,密度一上来读者立刻识别"AI 写的"。即使你没用 LLM 套话词,这些**句法/段落层面的 tell** 仍然会出戏。写之前心里装着这份清单,写完读一遍数密度。
 
@@ -96,7 +83,6 @@ function extractTitle(markdown) {
 }
 
 module.exports = {
-  AUDITOR_LENS,
   AI_TELLS,
   titleToSlug,
   extractTitle,

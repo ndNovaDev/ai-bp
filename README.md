@@ -120,14 +120,19 @@ SessionEnd hook 后台异步打分并写入 `~/.ai-best-practice/data/index.json
 **起草不再 spawn `claude -p`**:草稿就在你当前这个 Claude Code 会话里写,复用你的模型(通常已是 1M 上下文),
 共享鉴权,token 走 `/cost`。
 
-起草面向一个"假想敌":公司内部用来审计 AI 最佳实践的 AI。它带 7 条探针(真实性、问题
-难度、AI 协作成熟度、沉淀深度、杠杆、成本诚实度、故事完整度),写在 `lib/draft.js` 的
-`AUDITOR_LENS` 常量里,所有起草调用都会带上这层"**内容审计**"约束。
+起草的核心策略:**先从用户的真实发言里画语气,再让主 Claude 照画像写**。pick 启动后会从
+所选 topic 的 primary session jsonl 里采样 `type:user/userType:external` 的真实发言,
+在工作记忆里固化一份语气画像(句长、标点、中英混杂、立场强度、引代码方式、口头禅),
+后续起草以此为锚 — 草稿读起来要像用户自己发的,不是像"很懂规范的 AI 写的"。
 
-同一个文件还 export 一份 `AI_TELLS`(**形式审计**)— 列了 6 类 LLM 结构性 tell
+唯一一份硬约束是 `lib/draft.js` 的 `AI_TELLS`(**形式审计**)— 列了 6 类 LLM 结构性 tell
 (否定式对仗 / 三项并列 / -ing 挂尾 / inline-header lists / outline 模具 / 向均值回归),
-来源 Wikipedia "Signs of AI writing"。起草时两份 lens 一起 Read 进上下文,
-"写啥"和"咋写"同时盯。判别原则不是"有没有"是"密度"。
+来源 Wikipedia "Signs of AI writing"。判别原则不是"有没有"是"密度":单个偶发可以,
+一段两个以上就重写那段。
+
+老版本曾经还带过一份 `AUDITOR_LENS`(7 条内容审计探针)+ 一坨结构模板和风格示例。实测
+那套约束本身就是均值化锚点,让草稿往"很懂规范的 AI 写的"方向收敛。整套都废了 — 现在
+内容质量和结构选择都让位给"模仿用户语气"这一件事。
 
 人工检阅后提交。
 

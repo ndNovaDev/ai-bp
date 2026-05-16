@@ -3,18 +3,8 @@ const assert = require('node:assert/strict');
 const {
   titleToSlug,
   extractTitle,
-  AUDITOR_LENS,
   AI_TELLS,
 } = require('../scripts/lib/draft');
-
-// ─── AUDITOR_LENS sanity ──────────────────────────────────────────────
-
-test('AUDITOR_LENS 包含 7 条探针的关键概念', () => {
-  // 不锁死措辞,只确认核心维度都在
-  for (const keyword of ['真实性', '难度', '成熟度', '沉淀', '杠杆', '诚实', 'STAR']) {
-    assert.match(AUDITOR_LENS, new RegExp(keyword), `缺少 ${keyword}`);
-  }
-});
 
 // ─── AI_TELLS sanity ──────────────────────────────────────────────────
 
@@ -74,7 +64,7 @@ test('extractTitle: 没 H1 时返回 untitled', () => {
 
 // ─── 模板已删除,确认 draft.js 不再导出它们 ──────────────────────────
 
-test('lib/draft.js 只暴露 utils,不再有 prompt 模板或 banned 黑名单', () => {
+test('lib/draft.js 只暴露 utils 和 AI_TELLS,内容审计 / 模板 / 黑名单都删了', () => {
   const draft = require('../scripts/lib/draft');
   // 模板字符串构造函数 + JSON schema 都已废弃,起草由主 Claude 全权驱动
   assert.equal(typeof draft.buildProbePrompt, 'undefined');
@@ -87,4 +77,6 @@ test('lib/draft.js 只暴露 utils,不再有 prompt 模板或 banned 黑名单',
   // BANNED_PHRASES 黑名单删了 — 重写循环换不掉等价 LLM 套话,只会多花 token
   assert.equal(typeof draft.BANNED_PHRASES, 'undefined');
   assert.equal(typeof draft.detectBanned, 'undefined');
+  // AUDITOR_LENS 删了 — 改成"采样用户真实发言、模仿语气"之后,内容审计约束反而成了均值化锚点
+  assert.equal(typeof draft.AUDITOR_LENS, 'undefined');
 });
