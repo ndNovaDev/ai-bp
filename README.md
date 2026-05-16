@@ -122,7 +122,12 @@ SessionEnd hook 后台异步打分并写入 `~/.ai-best-practice/data/index.json
 
 起草面向一个"假想敌":公司内部用来审计 AI 最佳实践的 AI。它带 7 条探针(真实性、问题
 难度、AI 协作成熟度、沉淀深度、杠杆、成本诚实度、故事完整度),写在 `lib/draft.js` 的
-`AUDITOR_LENS` 常量里,所有起草调用都会带上这层约束。
+`AUDITOR_LENS` 常量里,所有起草调用都会带上这层"**内容审计**"约束。
+
+同一个文件还 export 一份 `AI_TELLS`(**形式审计**)— 列了 6 类 LLM 结构性 tell
+(否定式对仗 / 三项并列 / -ing 挂尾 / inline-header lists / outline 模具 / 向均值回归),
+来源 Wikipedia "Signs of AI writing"。起草时两份 lens 一起 Read 进上下文,
+"写啥"和"咋写"同时盯。判别原则不是"有没有"是"密度"。
 
 人工检阅后提交。
 

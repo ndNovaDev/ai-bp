@@ -176,6 +176,17 @@ AskUserQuestion 的 options 上限是 4,所以一屏只能展示 top 4 topic。�
 **在你的下一条回复里直接产出一份高质量的 AI 实践报告**。结构、字数、写作风格全由你定 —
 不预设 STAR,不预设标题/引用块/署名等套路,写法服务于这件事本身。
 
+**写作前必读两份 lens** — 一份管"写啥",一份管"咋写":
+
+```bash
+node -e 'const {AUDITOR_LENS, AI_TELLS} = require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/draft"); console.log(AUDITOR_LENS); console.log("\n──────────\n"); console.log(AI_TELLS);'
+```
+
+- `AUDITOR_LENS`(**内容审计**):7 条探针 — 真实性 / 难度 / 成熟度 / 沉淀 / 杠杆 / 诚实 / 完整度
+- `AI_TELLS`(**形式审计**):6 类 LLM 结构性 tell — 否定式对仗 / 三项并列 / -ing 挂尾 / inline-header lists / outline 模具 / 向均值回归。来源 Wikipedia "Signs of AI writing"。
+
+两份 lens 读完再开始写。**判别原则:不是"有没有",是"密度"** — 单个偶发可以,密度上来读者立刻识别"AI 写的"。
+
 **写作锚:跟一位懂行的同事讲自己做的一件事**。工整书面语,不端着,但绝不刻意"演接地气"。判别标准:这段文字打印出来,你愿意直接转发给同事看吗?
 
 **结构原则(是叙事节奏,不是模板)**:

@@ -4,6 +4,7 @@ const {
   titleToSlug,
   extractTitle,
   AUDITOR_LENS,
+  AI_TELLS,
 } = require('../scripts/lib/draft');
 
 // ─── AUDITOR_LENS sanity ──────────────────────────────────────────────
@@ -13,6 +14,20 @@ test('AUDITOR_LENS 包含 7 条探针的关键概念', () => {
   for (const keyword of ['真实性', '难度', '成熟度', '沉淀', '杠杆', '诚实', 'STAR']) {
     assert.match(AUDITOR_LENS, new RegExp(keyword), `缺少 ${keyword}`);
   }
+});
+
+// ─── AI_TELLS sanity ──────────────────────────────────────────────────
+
+test('AI_TELLS 包含 6 类结构性 tell 的关键概念', () => {
+  // 来源 Wikipedia:Signs of AI writing,核心 6 类必须都在
+  for (const keyword of ['否定式对仗', '三项并列', '挂尾', 'inline-header', 'outline', '向均值回归']) {
+    assert.match(AI_TELLS, new RegExp(keyword, 'i'), `缺少 ${keyword}`);
+  }
+});
+
+test('AI_TELLS 明确"不是有没有,是密度"的判别原则', () => {
+  // 这条原则是 AI_TELLS 的元规则,删了就退化成 BANNED_PHRASES
+  assert.match(AI_TELLS, /密度/);
 });
 
 // ─── titleToSlug ──────────────────────────────────────────────────────

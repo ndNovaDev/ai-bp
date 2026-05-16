@@ -97,10 +97,11 @@ Key design points to preserve when modifying:
 
 - **Scoring 走子进程,Drafting 不走**:`lib/score.js` `spawn('claude', [...])` 跑 Haiku
   (`--bare --no-session-persistence` 防止 scorer 自己的会话被 hook 递归索引)。
-  `lib/draft.js` **不**起子进程,**也不再有 prompt 模板** — 它只 export 三样裸物料:
-  `AUDITOR_LENS`(7 条审计探针文本)、`titleToSlug`、`extractTitle`。整个起草工作流
-  (取证 → 采访 → 终稿)由 `commands/ai-practice-pick.md` 描述,主 Claude 在自己的
-  上下文里 agent 化驱动。好处:复用主会话的鉴权 + 1M context,不走 Anthropic 的
+  `lib/draft.js` **不**起子进程,**也不再有 prompt 模板** — 它只 export 四样裸物料:
+  `AUDITOR_LENS`(**内容审计**,7 条探针文本)、`AI_TELLS`(**形式审计**,6 类 LLM
+  结构性 tell,来自 Wikipedia "Signs of AI writing")、`titleToSlug`、`extractTitle`。
+  整个起草工作流(取证 → 采访 → 终稿)由 `commands/ai-practice-pick.md` 描述,
+  主 Claude 在自己的上下文里 agent 化驱动 — 写之前 Read 两份 lens 进上下文。好处:复用主会话的鉴权 + 1M context,不走 Anthropic 的
   "长上下文 Extra Usage"计费档(否则 429)。不要把这种"主对话直起草"再退回 `claude -p`,
   也不要把 prompt 模板加回来 — 主 Claude 已经能基于步描述直接产出。
 - **mtime cache** in `scan.js` / `scan-session.js`: a row is skipped when
