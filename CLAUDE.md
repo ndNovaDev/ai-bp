@@ -27,7 +27,7 @@ pick up the change via `/plugin update`.
 ## Common commands
 
 ```bash
-# Run full test suite (47 tests, node --test, zero deps)
+# Run full test suite (83 tests, node --test, zero deps)
 env -u _VOLTA_TOOL_RECURSION node --test test/*.test.js
 
 # Run a single test file
@@ -86,14 +86,16 @@ SessionEnd hook → hooks/on-stop.sh → scripts/scan-session.js ─┐
    (Read / Bash / grep / jq)按需取证,边看边判断"够了"就停
 2. **5a 采访补证据**:主 Claude 出 1-3 道题(LLM 看不出的事:动机、真实 ROI、备选方案、复用面),
    一次 `AskUserQuestion`(API 上限 4)收完
-3. **5b 起草大纲**:主 Claude 基于(证据 + 答复)产出大纲,一行一段主题句,5-12 行
-4. **5c 大纲确认**:一次 `AskUserQuestion` 三选项 — 采纳/重写/微调。
-   选"重写"就回一句提示并结束当前 slash command 轮,用户下条消息发新大纲后主对话里自然续上
+3. **5b 大纲来源(强烈建议用户自带)**:一次 `AskUserQuestion` 二选一 — "我自己写大纲 (强烈推荐)" /
+   "让 Claude 先草一份"。AI 不会读心术,用户自己写 3-5 条 bullet 比 Claude 猜半天值。
+   选自带就结束当前 slash command 轮,用户下条消息发大纲后主对话续上 5d。选 Claude 草就进 5c
+4. **5c Claude 起草+确认(仅 5b 选了 Claude 草时)**:Claude 出大纲后一次 `AskUserQuestion`
+   二选一(采纳/微调)
 5. **5d 段落起草**:先把短 `STYLE_GUIDE`(3-8 行,只指方向)读进上下文,然后按大纲一行写一段,
    每段 3-6 句
 6. **5e/5f Peterson 修订**:一遍砍句、一遍砍段+重排。原话"试着删掉每一句,不出问题就删"
-7. **5g 反推大纲 sanity check**:从修剪后的草稿反推主题句,跟原大纲对比;差异大就在报告里
-   标注但**不再循环重写**(缩水版决策)
+7. **5g 反推大纲 sanity check**:从修剪后的版本反推主题句,跟原大纲对比;差异大且事后大纲松散
+   就**回 5e/5f 循环到通过**。一次过把事情做对 — 落盘的是最终版本,不假设用户会 review
 8. **5h 落盘**:`titleToSlug` 拼 `<期号>-<slug>.md`,`Write` 写到 `~/.ai-best-practice/weekly/`
 9. 单案例 H1 直接是案例名,无 H2;多案例 H1 是期号,每案 H2 是案例名
 

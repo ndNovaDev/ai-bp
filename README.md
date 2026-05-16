@@ -8,7 +8,7 @@
 1. 扫 `~/.claude/projects/` 里**所有**会话(不做项目级过滤,值不值由 AI 评)
 2. 用 **Haiku 4.5** 给每段会话打分(0–100)+ 中文摘要 + 亮点 + 标签
 3. 每次会话结束后自动增量入库(`Stop` hook)
-4. 周末用 `/ai-practice-pick` 交互式挑案例 → 自动起草中文 markdown 草稿
+4. 周末用 `/ai-practice-pick` 交互式挑案例 → 一次性写出最终版本的中文 markdown
 
 ## 目录结构
 
@@ -115,26 +115,27 @@ SessionEnd hook 后台异步打分并写入 `~/.ai-best-practice/data/index.json
 流程:列出候选 → AI 二次排序(时效/多样/完整度) → `AskUserQuestion` 给你勾 1–3 条 →
 **主对话的 Claude**(就是你正在用的那个会话)按需收集证据(jsonl 元数据 / git log / 关键文件)
 → 出 1–3 道采访题(补 LLM 看不出的动机 / 真实 ROI / 杠杆) → 一次 `AskUserQuestion` 一屏问完 →
-主对话融合答复出终稿 → `Write` 到 `~/.ai-best-practice/weekly/<期号>-<案例名 slug>.md`。
+**问你大纲来源(强烈推荐你自己给)** → 按 Peterson 流程(段落生成 → 砍句 → 砍段 → 反推大纲)
+→ `Write` 到 `~/.ai-best-practice/weekly/<期号>-<案例名 slug>.md`。
 
-**起草不再 spawn `claude -p`**:草稿就在你当前这个 Claude Code 会话里写,复用你的模型(通常已是 1M 上下文),
+**起草不再 spawn `claude -p`**:终稿就在你当前这个 Claude Code 会话里写,复用你的模型(通常已是 1M 上下文),
 共享鉴权,token 走 `/cost`。
 
-起草的核心策略:**先从用户的真实发言里画语气,再让主 Claude 照画像写**。pick 启动后会从
-所选 topic 的 primary session jsonl 里采样 `type:user/userType:external` 的真实发言,
-在工作记忆里固化一份语气画像(句长、标点、中英混杂、立场强度、引代码方式、口头禅),
-后续起草以此为锚 — 草稿读起来要像用户自己发的,不是像"很懂规范的 AI 写的"。
+起草走 **Jordan Peterson Essay Writing Guide 流程**:大纲 → 段落生成 → 砍句 → 砍段 → 反推大纲做
+sanity check。预设结构撬动作者把事情真想清楚,比事后形式审查有效。**落盘的是最终版本,不是草稿**
+—— 不要假设你回头会 review。
 
-唯一一份硬约束是 `lib/draft.js` 的 `AI_TELLS`(**形式审计**)— 列了 6 类 LLM 结构性 tell
-(否定式对仗 / 三项并列 / -ing 挂尾 / inline-header lists / outline 模具 / 向均值回归),
-来源 Wikipedia "Signs of AI writing"。判别原则不是"有没有"是"密度":单个偶发可以,
-一段两个以上就重写那段。
+**强烈推荐你自己提供大纲或主张** —— 哪怕是 3-5 条 bullet 也行。Claude 不会读心术,它能从证据拼出
+"你做了什么",但**不知道**你想突出哪条线、想给读者什么 take-away。自动起草的大纲多半不会是你
+心里那张图。给自己 30 秒写主张比 Claude 猜半天值。
 
-老版本曾经还带过一份 `AUDITOR_LENS`(7 条内容审计探针)+ 一坨结构模板和风格示例。实测
-那套约束本身就是均值化锚点,让草稿往"很懂规范的 AI 写的"方向收敛。整套都废了 — 现在
-内容质量和结构选择都让位给"模仿用户语气"这一件事。
+唯一的风格锚是一份**短** `STYLE_GUIDE`(3-8 行,只指方向:"按优秀技术文档/指南的标准写")。
+刻意不列具体 do/don't —— 一列就退化成均值化锚点。
 
-人工检阅后提交。
+老版本带过 `AUDITOR_LENS`(7 条内容审计探针)+ 写作结构模板;后一版换成"摸用户语气画像 +
+AI_TELLS(Wikipedia 'Signs of AI writing' 6 类形式 tell 密度自检)"。都实测过 —— 那些约束本身
+就是均值化锚点,草稿读起来仍像"很懂规范的 AI 写的"。整套废了,见 `scripts/lib/draft.js` 头注
+的演化史。
 
 ## 隐私 / 体积
 
@@ -155,7 +156,7 @@ SessionEnd hook 后台异步打分并写入 `~/.ai-best-practice/data/index.json
 | `AIBP_NO_HEURISTIC` | unset | 设为 `1` 关掉本地启发式预筛(所有会话都走 Haiku) |
 
 > 起草用的不是子进程,所以没有 `AIBP_DRAFT_MODEL`:`/ai-practice-pick` 在你当前那个 Claude Code
-> 会话里直接写草稿,等于"主对话的模型就是起草模型"。你切换 `/model` 就切了起草模型。
+> 会话里直接写最终版本,等于"主对话的模型就是起草模型"。你切换 `/model` 就切了起草模型。
 
 ## 关键设计
 

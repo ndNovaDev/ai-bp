@@ -9,7 +9,7 @@ allowed-tools: [Bash, AskUserQuestion]
 
 下次跑 `/ai-practice-scan` 会**重新评分所有会话**(每条 ~$0.054,作者本机 346 条 ≈ $19),所以这是个破坏性操作 — 必须先确认。
 
-`weekly/` 下的周报草稿和 `logs/` **不会**被动。
+`weekly/` 下的周报文件和 `logs/` **不会**被动。
 
 ## 工作流(严格按顺序)
 
@@ -51,5 +51,5 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/clear-cache.js --clear
 
 ## 注意
 
-- 只清打分缓存。如果用户其实想删的是周报草稿或日志,提醒他们手动 `rm ~/.ai-best-practice/weekly/*.md` / `rm ~/.ai-best-practice/logs/ai-best-practice.log`,不要替他们做。
+- 只清打分缓存。如果用户其实想删的是周报文件或日志,提醒他们手动 `rm ~/.ai-best-practice/weekly/*.md` / `rm ~/.ai-best-practice/logs/ai-best-practice.log`,不要替他们做。
 - 删除后无法恢复,所以步 2 的确认不可省略。
