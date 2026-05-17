@@ -10,7 +10,8 @@ The user installs it; the plugin then watches their Claude Code sessions.
 
 Goal: scan `~/.claude/projects/*.jsonl` history, score each session with Haiku
 ("AI best-practice gold value" 0–100), and let `/ai-practice-pick` turn high-scoring
-sessions into a Chinese OKR weekly-report draft.
+sessions into a **final-form** Chinese OKR weekly-report (not a draft — landed file
+is the deliverable).
 
 ## Mandatory release checklist
 
@@ -27,7 +28,7 @@ pick up the change via `/plugin update`.
 ## Common commands
 
 ```bash
-# Run full test suite (83 tests, node --test, zero deps)
+# Run full test suite (86 tests, node --test, zero deps)
 env -u _VOLTA_TOOL_RECURSION node --test test/*.test.js
 
 # Run a single test file
@@ -78,10 +79,10 @@ SessionEnd hook → hooks/on-stop.sh → scripts/scan-session.js ─┐
                                                               │
 /ai-practice-scan → scripts/scan.js (batch + cache) ──────────┤→ lib/parse-jsonl → lib/score → INDEX_PATH
                                                         │
-/ai-practice-pick → scripts/list.js → 主对话起草(Peterson 流程 + 4 路 peer review)→ WEEKLY_DIR
+/ai-practice-pick → scripts/list.js → 主对话直接写最终稿(锚 user 原话,不锚 Haiku 摘要)→ WEEKLY_DIR
 ```
 
-**起草流程完整描述在 `commands/ai-practice-pick.md`(步 5a-5i),演化史 + 历代失败模式在 `scripts/lib/draft.js` 头注。** 不要把 `claude -p` 子进程、AUDITOR_LENS、AI_TELLS、摸用户语气画像、句式打散这类后处理规则加回来 — 都已被证实是均值化锚点,见 draft.js 头注。
+**起草流程在 `commands/ai-practice-pick.md`,历代失败模式在 `scripts/lib/draft.js` 头注(单行回顾)。** 当前 step 5 只有四条方向性约束(王小波口吻 / 金字塔原理结构 / 避免"知识的诅咒" / 读者画像是审稿 AI + 公司领导),外加一条硬约束(只锚 user 原始消息,不许碰 Haiku 摘要)。不要再加 `claude -p` 子进程起草、AUDITOR_LENS、AI_TELLS、摸用户语气画像、句式打散、Peterson 多步骤、多路 peer review 这类东西 — 全部已被证伪,见 draft.js 头注。
 
 Key design points to preserve when modifying:
 

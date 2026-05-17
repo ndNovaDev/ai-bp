@@ -7,8 +7,8 @@
 
 1. 扫 `~/.claude/projects/` 里**所有**会话(不做项目级过滤,值不值由 AI 评)
 2. 用 **Haiku 4.5** 给每段会话打分(0–100)+ 中文摘要 + 亮点 + 标签
-3. 每次会话结束后自动增量入库(`Stop` hook)
-4. 周末用 `/ai-practice-pick` 交互式挑案例 → 一次性写出最终版本的中文 markdown
+3. 每次会话结束后自动增量入库(`SessionEnd` hook)
+4. 周末用 `/ai-practice-pick` 交互式挑案例 → 一次性写出**最终版本**的中文 markdown(不是草稿,落盘即交付)
 
 ## 目录结构
 
@@ -46,7 +46,7 @@ ai-best-practice/
 安装后:
 
 - `/ai-practice-scan` 和 `/ai-practice-pick` 自动出现在 `/help` 里
-- `Stop` hook 自动生效,会话结束后台异步评分入库
+- `SessionEnd` hook 自动生效,会话结束后台异步评分入库
 
 升级到最新版:
 
@@ -112,17 +112,11 @@ SessionEnd hook 后台异步打分并写入 `~/.ai-best-practice/data/index.json
 /ai-practice-pick 最近一周高分前 5 条
 ```
 
-流程:列出候选 → AI 二次排序 → `AskUserQuestion` 勾 1–3 条 → **主对话 Claude** 按需收证据
-(jsonl 元数据 / git log / 关键文件) → 1–3 道采访题补 LLM 看不出的事(动机 / ROI / 杠杆)
-→ **Claude 先草大纲 + 一次 `AskUserQuestion`**(Other 接任意输入) → Peterson 流程(段落 →
-砍句 → 砍段 → 反推大纲 sanity check) → **4 路 subagent 同行评审**(AI 审查员 / 同级同事+文档专家
-/ 技术专家 / 公司老板)→ `Write` 到 `~/.ai-best-practice/weekly/<期号>-<案例名 slug>.md`。
+流程:列出候选 → 主对话 Claude 聚类 + 二次排序 → `AskUserQuestion` 勾 1–3 个 topic → 按需收证据(index.jsonl 元数据 / `parse-jsonl --user-turns` 抽 user 原话 / git log / 关键文件)→ 直接写最终稿 → `Write` 到 `~/.ai-best-practice/weekly/<期号>-<案例名 slug>.md`。
 
-起草直接在你当前会话里跑,复用模型 + 鉴权,token 走 `/cost`。peer review ~$0.10-0.30 / 案例。**落盘即最终版本** —— 不假设你回头会 review。
+起草直接在你当前会话里跑,复用模型 + 鉴权,token 走 `/cost`。**落盘即交付,不是草稿**。
 
-**强烈建议自己给个大纲或主张** —— 哪怕一句"重点是 X"也行。Claude 能拼出"你做了什么",但不知道你想突出哪条线。流程会一次 `AskUserQuestion` 让你二选一("采纳" / "Other 任意输入")。
-
-唯一的风格锚是 `scripts/lib/draft.js` 里一份 3-8 行的 `STYLE_GUIDE`,只指方向不列规则。历代失败的"列规则"尝试(AUDITOR_LENS / AI_TELLS / 摸语气画像 / 句式打散)见 `draft.js` 头注的演化史。
+四条方向性约束烤在 `commands/ai-practice-pick.md` 步 5 里:王小波口吻 / 金字塔原理结构 / 避免"知识的诅咒" / 读者画像是审稿 AI + 公司领导。**只指方向不列规则** —— 历代列规则的失败尝试(AUDITOR_LENS / AI_TELLS / STYLE_GUIDE / Peterson + 多路 peer review / 句式打散)全部被证伪,详见 `scripts/lib/draft.js` 头注的演化史。
 
 ## 隐私 / 体积
 

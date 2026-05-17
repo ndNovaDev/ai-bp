@@ -6,3 +6,6 @@ weekly/
 *.log
 node_modules/
 .DS_Store
+
+# Playwright MCP 运行时残留
+.playwright-mcp/
