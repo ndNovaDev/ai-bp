@@ -1,0 +1,7 @@
+{"type":"user","message":{"role":"user","content":"<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>"},"sessionId":"sess-noisy-01","cwd":"/Users/lqy/proj-x","timestamp":"2026-05-12T09:00:00.000Z"}
+{"type":"user","message":{"role":"user","content":"<command-name>/ai-practice-pick</command-name>\n<command-args>本周</command-args>\n这周关于自动化的高分"},"sessionId":"sess-noisy-01","cwd":"/Users/lqy/proj-x","timestamp":"2026-05-12T09:01:00.000Z"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"好的。"}]},"sessionId":"sess-noisy-01","timestamp":"2026-05-12T09:01:05.000Z"}
+{"type":"user","message":{"role":"user","content":"<system-reminder>\nThe task tools haven't been used.\n</system-reminder>\n再继续"},"sessionId":"sess-noisy-01","cwd":"/Users/lqy/proj-x","timestamp":"2026-05-12T09:02:00.000Z"}
+{"type":"user","message":{"role":"user","content":"<bash-input>ls</bash-input>\n<bash-stdout>a\nb</bash-stdout>"},"sessionId":"sess-noisy-01","cwd":"/Users/lqy/proj-x","timestamp":"2026-05-12T09:03:00.000Z"}
+{"type":"user","message":{"role":"user","content":"<local-command-stdout>some shell output</local-command-stdout>"},"sessionId":"sess-noisy-01","cwd":"/Users/lqy/proj-x","timestamp":"2026-05-12T09:04:00.000Z"}
+{"type":"user","message":{"role":"user","content":"我想把这事弄明白"},"sessionId":"sess-noisy-01","cwd":"/Users/lqy/proj-x","timestamp":"2026-05-12T09:05:00.000Z"}

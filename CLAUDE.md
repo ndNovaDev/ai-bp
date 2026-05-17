@@ -82,7 +82,11 @@ SessionEnd hook → hooks/on-stop.sh → scripts/scan-session.js ─┐
 /ai-practice-pick → scripts/list.js → 主对话直接写最终稿(锚 user 原话,不锚 Haiku 摘要)→ WEEKLY_DIR
 ```
 
-**起草流程在 `commands/ai-practice-pick.md`,历代失败模式在 `scripts/lib/draft.js` 头注(单行回顾)。** 当前 step 5 只有四条方向性约束(王小波口吻 / 金字塔原理结构 / 避免"知识的诅咒" / 读者画像是审稿 AI + 公司领导),外加一条硬约束(只锚 user 原始消息,不许碰 Haiku 摘要)。不要再加 `claude -p` 子进程起草、AUDITOR_LENS、AI_TELLS、摸用户语气画像、句式打散、Peterson 多步骤、多路 peer review 这类东西 — 全部已被证伪,见 draft.js 头注。
+**起草流程在 `commands/ai-practice-pick.md`,历代失败模式在 `scripts/lib/draft.js` 头注(单行回顾)。** 当前流程:步 5 采访(Claude 草一段全文简述 → 用户二选一:采纳 / 我自己来)→ 步 6 第一版(四条方向性约束:王小波口吻 / 金字塔原理结构 / 避免"知识的诅咒" / 读者画像是审稿 AI + 公司领导)→ 步 7 句式打散(逐子句重写,长短随机 + 句式随机,**唯一硬约束是通顺**,不列变换维度)。隐性硬约束:只锚 user 原始消息,不许碰 Haiku 摘要。
+
+不要再加 `claude -p` 子进程起草、AUDITOR_LENS、AI_TELLS、摸用户语气画像、Peterson 多步骤、多路 peer review 这类东西 — 全部已被证伪,见 draft.js 头注。**注意句式打散在 0.1.35 被有约束地恢复了**(只一条"通顺",不列变换维度),不是"abandoned" —— v3.x 那版列了"换起头/动词/修辞/句式"具体清单 + "能抠出 SOP 就推倒重做"自指悖论才失败,当前版本和 v3.x 不一样,不要再当成同一个东西删掉。
+
+**输入清洁**(0.1.39):`extractUserTurns` 和 card 构建都会过 `stripFrameworkNoise`,剥掉 `<command-name>/<system-reminder>/<bash-input>` 等 Claude Code 框架包装块。实测全量 jsonl 里 20% 的 user turn 含这些,97% 是去掉之后就空了 —— 它们曾经污染起草锚定的"用户原话"。如果哪天需要把某段框架内容当成"真用户输入"对待,从 `parse-jsonl.js` 的 `NOISE_TAGS` 里去掉对应 tag 即可。
 
 Key design points to preserve when modifying:
 

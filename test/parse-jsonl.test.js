@@ -4,7 +4,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
-const { buildSessionCard, gitCommitsInWindow, extractUserTurns } = require('../scripts/lib/parse-jsonl');
+const { buildSessionCard, gitCommitsInWindow, extractUserTurns, stripFrameworkNoise } = require('../scripts/lib/parse-jsonl');
 
 const FIXTURES = path.join(__dirname, 'fixtures');
 
@@ -165,6 +165,63 @@ test('extractUserTurns: malformed — 跳坏行,留 2 条', async () => {
 test('extractUserTurns: empty — 空数组', async () => {
   const turns = await extractUserTurns(path.join(FIXTURES, 'empty.jsonl'));
   assert.deepEqual(turns, []);
+});
+
+test('stripFrameworkNoise: 剥掉 slash command / bash / system-reminder 等框架包装', () => {
+  // slash command 三件套
+  assert.equal(
+    stripFrameworkNoise('<command-name>/clear</command-name>\n<command-message>clear</command-message>\n<command-args></command-args>'),
+    '',
+  );
+  // 包装块外有真人话 → 留下来
+  assert.equal(
+    stripFrameworkNoise('<command-name>/foo</command-name>\n继续做剩下的'),
+    '继续做剩下的',
+  );
+  // bash / system-reminder / local-command-stdout / user-prompt-submit-hook / ide_selection
+  assert.equal(stripFrameworkNoise('<bash-input>ls</bash-input><bash-stdout>a</bash-stdout>'), '');
+  assert.equal(stripFrameworkNoise('<system-reminder>noise</system-reminder>\n真话'), '真话');
+  assert.equal(stripFrameworkNoise('<local-command-stdout>out</local-command-stdout>'), '');
+  assert.equal(stripFrameworkNoise('<user-prompt-submit-hook>hook</user-prompt-submit-hook>x'), 'x');
+  assert.equal(stripFrameworkNoise('<ide_selection>sel</ide_selection> y'), 'y');
+  // 普通 XML/HTML 不在白名单 → 完整保留
+  assert.equal(stripFrameworkNoise('<div>keep me</div>'), '<div>keep me</div>');
+  assert.equal(stripFrameworkNoise('<example>X</example>'), '<example>X</example>');
+  // 多层换行收敛
+  assert.equal(stripFrameworkNoise('a\n\n\n\nb'), 'a\n\nb');
+  // 空 / null 输入
+  assert.equal(stripFrameworkNoise(''), '');
+  assert.equal(stripFrameworkNoise(null), '');
+});
+
+test('extractUserTurns: 剥掉框架噪声,纯噪声 turn 被丢弃', async () => {
+  // noisy.jsonl 有 7 条 user:
+  //   1 - 纯 /clear → 剥后为空 → 丢
+  //   2 - /ai-practice-pick 包装 + "这周关于自动化的高分" → 留 "这周关于自动化的高分"
+  //   3 - assistant (不计)
+  //   4 - <system-reminder> + "再继续" → 留 "再继续"
+  //   5 - 纯 bash-input/bash-stdout → 丢
+  //   6 - 纯 local-command-stdout → 丢
+  //   7 - "我想把这事弄明白" → 留
+  const turns = await extractUserTurns(path.join(FIXTURES, 'noisy.jsonl'));
+  assert.equal(turns.length, 3, '7 条 user 里 4 条是纯框架噪声,只留 3 条人话');
+  assert.equal(turns[0].text, '这周关于自动化的高分');
+  assert.equal(turns[1].text, '再继续');
+  assert.equal(turns[2].text, '我想把这事弄明白');
+  // 确认没有任何残留的 < > 标签
+  for (const t of turns) {
+    assert.ok(!t.text.includes('<command-'), 'no leftover <command-* tag');
+    assert.ok(!t.text.includes('<system-reminder>'), 'no leftover <system-reminder>');
+    assert.ok(!t.text.includes('<bash-'), 'no leftover <bash-*');
+  }
+});
+
+test('buildSessionCard: 框架噪声的 user turn 不计入 turns / firstPrompt', async () => {
+  const card = await buildSessionCard(path.join(FIXTURES, 'noisy.jsonl'));
+  // 7 条 user message, 4 条纯框架包装应当被排除
+  assert.equal(card.turns, 3);
+  // firstPrompt 取的应该是第二条(剥掉框架包装后的真话),不是第一条 /clear
+  assert.equal(card.firstPrompt, '这周关于自动化的高分');
 });
 
 test('extractUserTurns: maxCharsPerTurn 截断长 prompt', async () => {

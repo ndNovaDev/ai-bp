@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// 读 ~/.claude/ai-best-practice/data/index.jsonl,按过滤条件返回候选 JSON 列表
+// 读 ~/.ai-best-practice/data/index.jsonl,按过滤条件返回候选 JSON 列表
 // (供 /ai-practice-pick 用)。路径可用 AIBP_DATA_DIR 覆盖,详见 lib/paths.js。
 //
 // 用法:

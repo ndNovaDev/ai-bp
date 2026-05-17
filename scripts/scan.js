@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 扫描 ~/.claude/projects/ 下所有会话 jsonl,调 lib/score.js 打分,
-// 把结果写入 ~/.claude/ai-best-practice/data/index.jsonl(以 sessionId 为主键)。
+// 把结果写入 ~/.ai-best-practice/data/index.jsonl(以 sessionId 为主键)。
 // 路径可用 AIBP_DATA_DIR 覆盖,详见 lib/paths.js。
 //
 // 默认就是"全量扫":遍历所有 jsonl,首次跑会评所有 session;

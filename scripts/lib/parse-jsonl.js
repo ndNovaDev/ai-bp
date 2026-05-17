@@ -13,6 +13,37 @@ const KEY_TURN_MIN_TOOLS = 3;
 const KEY_TURN_TEXT_CAP = 400;
 const MAX_KEY_TURNS = 5;
 
+// Claude Code 框架在 user 消息里塞的 XML 包装块,不是用户人话:
+// /clear 之类的 slash command 会被记成 <command-name>/clear</command-name>;
+// `!` bash 触发会拿 <bash-input>/<bash-stdout>/<bash-stderr>; 还有 <system-reminder>
+// / <local-command-stdout> / <user-prompt-submit-hook> / <ide_selection>。
+// 实测全量 jsonl 里 20% 的 user turn 含这些,且 97% 是去掉之后就空了 ——
+// 它们污染 (a) 起草阶段 extractUserTurns 锚定的"用户原话",(b) Haiku 评分卡里
+// firstPrompt / lastUserPrompt / keyTurns。
+// 这里把这些标签连同内容一起剥掉。普通 XML/HTML 不在白名单内,不会误伤。
+const NOISE_TAGS = [
+  'command-name',
+  'command-message',
+  'command-args',
+  'local-command-stdout',
+  'local-command-stderr',
+  'bash-input',
+  'bash-stdout',
+  'bash-stderr',
+  'system-reminder',
+  'user-prompt-submit-hook',
+  'ide_selection',
+];
+const NOISE_RE = new RegExp(
+  `<(?:${NOISE_TAGS.join('|')})>[\\s\\S]*?</(?:${NOISE_TAGS.join('|')})>`,
+  'g',
+);
+
+function stripFrameworkNoise(text) {
+  if (!text) return '';
+  return String(text).replace(NOISE_RE, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 function textOfContent(content) {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
@@ -102,15 +133,19 @@ async function buildSessionCard(jsonlPath) {
     if (!msg) continue;
 
     const role = msg.role || entry.type;
-    const text = textOfContent(msg.content);
+    let text = textOfContent(msg.content);
     const toolUses = toolUsesOfContent(msg.content);
 
     // 过滤纯 tool_result 的 user 消息(那是工具回执,不是真的用户输入)
     if (role === 'user') {
       const hasToolResult =
         Array.isArray(msg.content) && msg.content.some((p) => p && p.type === 'tool_result');
+      // 剥掉 Claude Code 框架的 XML 包装块(slash command / bash / system-reminder 等)。
+      // 整条 strip 后为空 → 这个 turn 根本不是人话,跳过(不计 turn、不进 keyTurns)。
+      text = stripFrameworkNoise(text);
       const hasText = text.length > 0;
       if (hasToolResult && !hasText) continue;
+      if (!hasText && !toolUses.length) continue;
       if (hasText) {
         turns++;
         if (!firstPrompt) firstPrompt = text;
@@ -201,11 +236,12 @@ async function extractUserTurns(jsonlPath, opts = {}) {
     if (entry.type !== 'user') continue;
     const msg = entry.message;
     if (!msg) continue;
-    const text = textOfContent(msg.content);
-    if (!text) continue; // 纯 tool_result(无文本)跳过
-    const hasToolResult =
-      Array.isArray(msg.content) && msg.content.some((p) => p && p.type === 'tool_result');
-    if (hasToolResult && !text) continue;
+    const raw = textOfContent(msg.content);
+    if (!raw) continue; // 纯 tool_result(无文本)跳过
+    // 剥掉 Claude Code 框架的 XML 包装块。这是起草锚定的主证据 ——
+    // 让 <command-name>/clear</command-name> 这类 bookkeeping 进文章会拉低质量。
+    const text = stripFrameworkNoise(raw);
+    if (!text) continue;
     turns.push({
       ts: entry.timestamp || null,
       text: maxCharsPerTurn > 0 ? clip(text, maxCharsPerTurn) : text,
@@ -214,7 +250,7 @@ async function extractUserTurns(jsonlPath, opts = {}) {
   return turns;
 }
 
-module.exports = { buildSessionCard, gitCommitsInWindow, extractUserTurns };
+module.exports = { buildSessionCard, gitCommitsInWindow, extractUserTurns, stripFrameworkNoise };
 
 if (require.main === module) {
   const args = process.argv.slice(2);
