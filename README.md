@@ -112,11 +112,11 @@ SessionEnd hook 后台异步打分并写入 `~/.ai-best-practice/data/index.json
 /ai-practice-pick 最近一周高分前 5 条
 ```
 
-流程:列出候选 → 主对话 Claude 聚类 + 二次排序 → `AskUserQuestion` 勾 1–3 个 topic → 按需收证据(index.jsonl 元数据 / `parse-jsonl --user-turns` 抽 user 原话 / git log / 关键文件)→ 直接写最终稿 → `Write` 到 `~/.ai-best-practice/weekly/<期号>-<案例名 slug>.md`。
+流程:列出候选 → 主对话 Claude 聚类 + 二次排序 → `AskUserQuestion` 勾 1–3 个 topic → 按需收证据(index.jsonl 元数据 / `parse-jsonl --user-turns` 抽 user 原话 / git log / 关键文件)→ **逐 topic 一次采访(`AskUserQuestion`,让你简短给方向:大纲、简述、要点、或"你看着办")** → 按你给的方向写第一版 → 句式打散(每子句重写,长短随机 + 句式随机 + 王小波口吻,唯一硬约束是通顺) → `Write` 到 `~/.ai-best-practice/weekly/<期号>-<案例名 slug>.md`。
 
 起草直接在你当前会话里跑,复用模型 + 鉴权,token 走 `/cost`。**落盘即交付,不是草稿**。
 
-四条方向性约束烤在 `commands/ai-practice-pick.md` 步 5 里:王小波口吻 / 金字塔原理结构 / 避免"知识的诅咒" / 读者画像是审稿 AI + 公司领导。**只指方向不列规则** —— 历代列规则的失败尝试(AUDITOR_LENS / AI_TELLS / STYLE_GUIDE / Peterson + 多路 peer review / 句式打散)全部被证伪,详见 `scripts/lib/draft.js` 头注的演化史。
+四条方向性约束烤在 `commands/ai-practice-pick.md` 步 6 里:王小波口吻 / 金字塔原理结构 / 避免"知识的诅咒" / 读者画像是审稿 AI + 公司领导。**只指方向不列规则** —— 历代列规则的失败尝试(AUDITOR_LENS / AI_TELLS / STYLE_GUIDE / Peterson + 多路 peer review / v3.x 那版含具体清单的句式打散)全部被证伪,详见 `scripts/lib/draft.js` 头注的演化史。当前的"句式打散"(步 7)和 v3.x 不一样:只一条硬约束(通顺),不列变换维度。
 
 ## 隐私 / 体积
 
