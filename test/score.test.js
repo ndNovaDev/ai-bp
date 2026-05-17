@@ -148,19 +148,48 @@ test('parseResult: score 浮点 round 到整数', () => {
   assert.equal(parseResult(stdout).score, 73);
 });
 
-test('parseResult: highlights 截断到 3 条,tags 截断到 6 条', () => {
+test('parseResult: highlights 截断到 3 条,tags 限于 whitelist 内截 6 条(0.1.41 enum)', () => {
   const stdout = JSON.stringify({
     is_error: false,
     structured_output: {
       score: 80,
       summary: 's',
       highlights: ['1', '2', '3', '4', '5'],
-      tags: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'],
+      // 8 个 whitelist tag,期望按顺序留 6 个
+      tags: ['automation', 'refactor', 'debug', 'meta', 'integration', 'design', 'docs', 'infra'],
     },
   });
   const r = parseResult(stdout);
   assert.equal(r.highlights.length, 3);
-  assert.equal(r.tags.length, 6);
+  assert.deepEqual(r.tags, ['automation', 'refactor', 'debug', 'meta', 'integration', 'design']);
+});
+
+test('parseResult: off-whitelist tag 被 filterTags 静默丢掉(0.1.41)', () => {
+  const stdout = JSON.stringify({
+    is_error: false,
+    structured_output: {
+      score: 80,
+      summary: 's',
+      highlights: [],
+      // optimization / workflow / seo 实际在历史索引里出现过,新版应被丢
+      tags: ['automation', 'optimization', 'workflow', 'refactor', 'seo'],
+    },
+  });
+  const r = parseResult(stdout);
+  assert.deepEqual(r.tags, ['automation', 'refactor']);
+});
+
+test('parseResult: 重复 tag 去重', () => {
+  const stdout = JSON.stringify({
+    is_error: false,
+    structured_output: {
+      score: 80,
+      summary: 's',
+      highlights: [],
+      tags: ['automation', 'automation', 'refactor', 'refactor'],
+    },
+  });
+  assert.deepEqual(parseResult(stdout).tags, ['automation', 'refactor']);
 });
 
 test('parseResult: is_error=true 抛出', () => {

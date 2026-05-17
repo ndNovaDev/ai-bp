@@ -52,6 +52,24 @@ ${JSON.stringify(compact)}
 - 无 commit 不单独扣分。文档 / 配置 / dotfile / skill / 个人脚本 / prompt 模板这类产出本来就不进 git,看 filesEditedSample 类型自己判;只有"代码扩展名 + 在 git 仓库内 + 零 commit"才是警惕信号`;
 }
 
+// tags 的合法取值集合,和 buildUserPrompt 里 prompt 列出的一致。
+// 0.1.41 前不带 enum,Haiku 偶尔会自造("optimization"/"workflow"/"security"/"seo"),
+// 全量 932 个 tag 实例里漂了 5 个,虽然不多但污染 --tag 过滤(用户用规范名字找不到)。
+// 加 enum 后 schema-constrained 输出直接被拒,Haiku 自然回退到 whitelist。
+const TAG_ENUM = [
+  'automation',
+  'refactor',
+  'debug',
+  'meta',
+  'integration',
+  'design',
+  'docs',
+  'infra',
+  'data',
+  'learning',
+  'chat',
+];
+
 const SCORE_SCHEMA = {
   type: 'object',
   required: ['score', 'summary', 'highlights', 'tags'],
@@ -67,7 +85,7 @@ const SCORE_SCHEMA = {
     tags: {
       type: 'array',
       maxItems: 6,
-      items: { type: 'string', maxLength: 30 },
+      items: { type: 'string', enum: TAG_ENUM },
     },
   },
 };
@@ -133,7 +151,7 @@ function parseResult(stdout) {
     score: Math.max(0, Math.min(100, Math.round(obj.score))),
     summary: String(obj.summary || '').trim(),
     highlights: Array.isArray(obj.highlights) ? obj.highlights.slice(0, 3) : [],
-    tags: Array.isArray(obj.tags) ? obj.tags.slice(0, 6) : [],
+    tags: filterTags(obj.tags),
     cost: outer.total_cost_usd,
     model: MODEL,
   };
@@ -157,6 +175,22 @@ async function scoreCard(card) {
   throw lastErr;
 }
 
+// 解析侧也补一道防线:即便 schema 没强 enum(老 Claude CLI / 切到无 schema 模型时),
+// parseResult 会把 off-whitelist 的 tag 静默丢掉,保证写入索引的 tags 干净。
+function filterTags(tags) {
+  if (!Array.isArray(tags)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const t of tags) {
+    if (typeof t !== 'string') continue;
+    if (!TAG_ENUM.includes(t)) continue;
+    if (seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+  }
+  return out.slice(0, 6);
+}
+
 module.exports = {
   scoreCard,
   MODEL,
@@ -164,6 +198,8 @@ module.exports = {
   parseResult,
   SCORE_SCHEMA,
   SYSTEM,
+  TAG_ENUM,
+  filterTags,
 };
 
 if (require.main === module) {
