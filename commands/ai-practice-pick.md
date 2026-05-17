@@ -18,6 +18,7 @@ allowed-tools: [Bash, Read, Write, AskUserQuestion]
 | 2026-05 / 5 月 | `--month 2026-05` |
 | 自 5 月 1 日以来 | `--since 2026-05-01` |
 | 关于 X 的 / X 相关 | `--tag X` |
+| 关于 X 或 Y 的 | `--tag X,Y` |
 | 高分的 | `--min-score 80` |
 | 前 N 条 | `--top N` |
 | 不限 / 全部 | `--full` |

@@ -36,7 +36,11 @@ function writeIndex(map) {
   const lines = [...map.values()]
     .sort((a, b) => (b.endedAt || '').localeCompare(a.endedAt || ''))
     .map((o) => JSON.stringify(o));
-  fs.writeFileSync(INDEX_PATH, lines.join('\n') + (lines.length ? '\n' : ''));
+  // 原子写:先写 .tmp,再 rename。SessionEnd hook 在 Cmd+Q / 强杀场景下可能
+  // 被半路打断 —— 写一半的 index 会导致下次 loadIndex 丢条目。
+  const tmp = INDEX_PATH + '.tmp';
+  fs.writeFileSync(tmp, lines.join('\n') + (lines.length ? '\n' : ''));
+  fs.renameSync(tmp, INDEX_PATH);
 }
 
 function cwdAllowed(cwd) {

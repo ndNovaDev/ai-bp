@@ -76,8 +76,12 @@ function parseArgs(argv) {
     else if (k === '--until') a.until = argv[++i];
     else if (k === '--week') a.week = argv[++i];
     else if (k === '--month') a.month = argv[++i];
-    else if (k === '--tag') a.tag = argv[++i];
-    else if (k === '--top') a.top = Number(argv[++i]);
+    else if (k === '--tag') {
+      // 允许多 tag(逗号分隔,OR 语义)。`--tag automation,refactor` = "automation 或 refactor"。
+      const raw = argv[++i] || '';
+      const parts = raw.split(',').map((s) => s.trim()).filter(Boolean);
+      a.tag = parts.length > 1 ? parts : parts[0] || null;
+    } else if (k === '--top') a.top = Number(argv[++i]);
     else if (k === '--min-score') a.minScore = Number(argv[++i]);
     else if (k === '--full') a.full = true;
     else if (k === '--recent') a.since = parseRecent(argv[++i]);
@@ -135,7 +139,10 @@ function applyFilters(rows, args) {
   let out = rows;
   if (lo) out = out.filter((r) => r.endedAt && r.endedAt >= lo);
   if (hi) out = out.filter((r) => r.endedAt && r.endedAt < hi);
-  if (args.tag) out = out.filter((r) => Array.isArray(r.tags) && r.tags.includes(args.tag));
+  if (args.tag) {
+    const wanted = Array.isArray(args.tag) ? args.tag : [args.tag];
+    out = out.filter((r) => Array.isArray(r.tags) && wanted.some((t) => r.tags.includes(t)));
+  }
   if (!args.full) out = out.filter((r) => (r.score || 0) >= args.minScore);
 
   out = out.slice().sort((a, b) => (b.score || 0) - (a.score || 0));

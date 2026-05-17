@@ -140,10 +140,21 @@ function parseResult(stdout) {
 }
 
 async function scoreCard(card) {
-  // 不重试:失败的会话由调用方在汇总时提示用户重新跑扫描,mtime 未变下一轮会自然重试。
+  // 一次重试:覆盖网络抖动 / Anthropic 偶发 502 这类瞬时错。
+  // 还失败就丢给调用方记 error,mtime 未变下一轮 scan 自然重跑(不重复扣 cache 命中的钱)。
   const prompt = buildUserPrompt(card);
-  const stdout = await runClaude(prompt);
-  return parseResult(stdout);
+  let lastErr;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const stdout = await runClaude(prompt);
+      return parseResult(stdout);
+    } catch (err) {
+      lastErr = err;
+      // 第二次重试前小退避 1-2s,避免抖动期再撞同一波。
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 1000 + Math.random() * 1000));
+    }
+  }
+  throw lastErr;
 }
 
 module.exports = {

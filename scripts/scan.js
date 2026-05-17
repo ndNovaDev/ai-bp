@@ -119,7 +119,11 @@ function writeIndex(map) {
   const lines = [...map.values()]
     .sort((a, b) => (b.endedAt || '').localeCompare(a.endedAt || ''))
     .map((o) => JSON.stringify(o));
-  fs.writeFileSync(INDEX_PATH, lines.join('\n') + (lines.length ? '\n' : ''));
+  // 原子写:先写 .tmp,再 rename。防止 scan 被 SIGKILL 截断、留下半截 jsonl —
+  // 一旦 index 损坏下次 loadIndex 静默 skip,等于丢失所有评分结果。
+  const tmp = INDEX_PATH + '.tmp';
+  fs.writeFileSync(tmp, lines.join('\n') + (lines.length ? '\n' : ''));
+  fs.renameSync(tmp, INDEX_PATH);
 }
 
 function cwdAllowed(cwd) {

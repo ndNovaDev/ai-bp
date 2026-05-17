@@ -143,6 +143,21 @@ test('applyFilters: --tag automation keeps only automation-tagged', () => {
   assert.deepEqual(new Set(out.map((r) => r.sessionId)), new Set(['a', 'c']));
 });
 
+test('applyFilters: --tag automation,refactor OR-matches both (0.1.41 多 tag)', () => {
+  const out = applyFilters(rows, parseArgs(['node', 'list.js', '--tag', 'automation,refactor']));
+  assert.deepEqual(new Set(out.map((r) => r.sessionId)), new Set(['a', 'c', 'd']));
+});
+
+test('parseArgs: --tag automation,refactor → 数组', () => {
+  const a = parseArgs(['node', 'list.js', '--tag', 'automation,refactor']);
+  assert.deepEqual(a.tag, ['automation', 'refactor']);
+});
+
+test('parseArgs: --tag 单值仍是字符串(向后兼容)', () => {
+  const a = parseArgs(['node', 'list.js', '--tag', 'automation']);
+  assert.equal(a.tag, 'automation');
+});
+
 test('applyFilters: --month 2026-05 keeps only May sessions', () => {
   const out = applyFilters(rows, parseArgs(['node', 'list.js', '--month', '2026-05', '--full']));
   assert.deepEqual(new Set(out.map((r) => r.sessionId)), new Set(['a', 'b', 'd']));

@@ -78,10 +78,54 @@ test('有 Edit 工具一律不命中(即便 filesEdited 空)', () => {
   assert.equal(tryHeuristicScore(card), null);
 });
 
-test('轮次充足 + 工具多 → 不命中(留给 Haiku)', () => {
+test('规则 3:中等长度 + 零产出 → 20 分(0.1.41 新增)', () => {
+  // 8 轮、9 个工具、没编辑、没 commit、没文件 — 实测 Haiku 给这类 0-59 分,
+  // 0.1.41 起本地直接判 20 分,省 Haiku 调用。
   const card = {
     turns: 8,
     tools: { Read: 4, Bash: 3, Grep: 2 },
+    filesEdited: [],
+    gitCommitsInWindow: [],
+  };
+  const r = tryHeuristicScore(card);
+  assert.equal(r.score, 20);
+  assert.deepEqual(r.tags, ['chat']);
+});
+
+test('规则 3 边界:turns=12 留给 Haiku', () => {
+  const card = {
+    turns: 12,
+    tools: { Read: 3, Bash: 3 },
+    filesEdited: [],
+    gitCommitsInWindow: [],
+  };
+  assert.equal(tryHeuristicScore(card), null);
+});
+
+test('规则 3 边界:totalTools=10 留给 Haiku', () => {
+  const card = {
+    turns: 5,
+    tools: { Read: 5, Bash: 5 },
+    filesEdited: [],
+    gitCommitsInWindow: [],
+  };
+  assert.equal(tryHeuristicScore(card), null);
+});
+
+test('规则 3:有 commit 不命中', () => {
+  const card = {
+    turns: 8,
+    tools: { Read: 4, Bash: 3 },
+    filesEdited: [],
+    gitCommitsInWindow: ['abc fix'],
+  };
+  assert.equal(tryHeuristicScore(card), null);
+});
+
+test('规则 3:有 Edit 工具不命中(即便 filesEdited 空)', () => {
+  const card = {
+    turns: 8,
+    tools: { Edit: 1, Read: 4 },
     filesEdited: [],
     gitCommitsInWindow: [],
   };

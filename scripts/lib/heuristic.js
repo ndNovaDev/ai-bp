@@ -62,6 +62,30 @@ function tryHeuristicScore(card) {
     };
   }
 
+  // 规则 3:中等规模但零持久化产出
+  // 实测自 0.1.40:本地 261 个 Haiku-scored 会话里,凡命中
+  //   filesEdited==0 && commits==0 && totalTools<10 && turns<12 && !hasEdit
+  // 的 29 条,Haiku 给的分数全在 0-59 区间(主要在 10-30),0 条达到 60(周报候选门槛)。
+  // 也就是说这条规则不会误伤任何 gold 会话,纯粹把"中等长度的查询/排错/请教"挡在
+  // Haiku 之外。比规则 1/2 放宽到 turns<12 + totalTools<10,因为这类会话即便聊得久
+  // 也没东西能落地。如果未来误判,把 turns 或 totalTools 上限再压一压即可。
+  if (
+    !hasEditTool(card.tools) &&
+    filesCount === 0 &&
+    commits === 0 &&
+    totalTools < 10 &&
+    turns < 12
+  ) {
+    return {
+      score: 20,
+      summary: `中等长度对话(<12 轮 / <10 次工具调用),${NO_EDIT_NOTE}。本地启发式判定为低值会话。`,
+      highlights: [],
+      tags: ['chat'],
+      cost: 0,
+      model: 'heuristic-v1',
+    };
+  }
+
   return null;
 }
 
