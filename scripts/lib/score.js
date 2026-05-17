@@ -7,18 +7,10 @@ const MODEL = process.env.AIBP_SCORE_MODEL || 'claude-haiku-4-5';
 const TIMEOUT_MS = Number(process.env.AIBP_SCORE_TIMEOUT_MS || 180_000);
 
 const SYSTEM = `你在评估一段 Claude Code 会话作为"AI 最佳实践案例"的含金量。
-评分维度:
-- 问题复杂度 / AI 替代了多少手工劳动
-- 工作流创新度(工具组合 / Skill / MCP / hook / plugin)
-- 可复用性(是否产出可沉淀的脚本/skill/hook/PR)
-- 故事完整度(问题 → 方法 → 结果)
+评分维度:问题复杂度 / 工作流创新度(工具组合 / Skill / MCP / hook / plugin)/ 可复用性(是否产出可沉淀的脚本/skill/hook/PR)/ 故事完整度(问题 → 方法 → 结果)。
 低分情形:闲聊、单轮简单问答、纯重复劳动、纯报错排查无沉淀。
 
-【输出格式约束 — 必须严格遵守】
-- 只输出一个 JSON 对象,不准有任何前导/尾随文字
-- 不准用 markdown 代码块(没有 \`\`\`)
-- 不准用"根据"、"以下是"、"分析:"等开场白
-- 第一个字符必须是 "{",最后一个字符必须是 "}"`;
+输出一个 JSON 对象(schema 已强制约束),不要任何 markdown 或前导文字。`;
 
 function buildUserPrompt(card) {
   const commits = card.gitCommitsInWindow || [];
@@ -56,14 +48,8 @@ ${JSON.stringify(compact)}
 - 走完了 plan → 实现 → 验证流程,且产出代码/脚本/skill/hook 的 ≥ 70 分
 - 跨工具组合(MCP/Skill/Bash 协作)+10
 - 产出可分发的 plugin / 通用工具 +10
-- gitCommitsInWindowCount > 0 是"代码改动真的落地"的强证据 +15;
-- **但"无 commit ≠ 无价值"**:大量有价值的产出本来就不进 git,看 filesEditedSample 的扩展名和路径再判:
-  - 文档类(.md / .txt / .rst / wiki / 飞书 doc)— 零 commit 是常态,不扣分
-  - 配置类(.json / .yaml / .toml / dotfiles / Claude Code 的 skill / command / hook 文件,常在 ~/.claude/ 或 .claude-plugin/ 下)— 零 commit 是常态,不扣分
-  - 个人脚本 / 一次性自动化(在 ~/scripts、/tmp、用户 home 下的脚本)— 零 commit 是常态,不扣分
-  - 给别的工具用的 prompt / 模板 / agent 配置 — 零 commit 是常态,不扣分
-  - **只有**:文件位于 git 仓库的代码目录(.js / .ts / .py / .go / .rs / .java / .cpp 等代码扩展名) **且** gitCommitsInWindowCount = 0 → 这种才是"改动可能没固化"的警惕信号
-- 不要单凭"无 commit"扣分。判断产出价值,要先判断产出类型`;
+- gitCommitsInWindowCount > 0 是强证据 +15
+- 无 commit 不单独扣分。文档 / 配置 / dotfile / skill / 个人脚本 / prompt 模板这类产出本来就不进 git,看 filesEditedSample 类型自己判;只有"代码扩展名 + 在 git 仓库内 + 零 commit"才是警惕信号`;
 }
 
 const SCORE_SCHEMA = {

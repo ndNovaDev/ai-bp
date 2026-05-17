@@ -78,57 +78,16 @@ SessionEnd hook → hooks/on-stop.sh → scripts/scan-session.js ─┐
                                                               │
 /ai-practice-scan → scripts/scan.js (batch + cache) ──────────┤→ lib/parse-jsonl → lib/score → INDEX_PATH
                                                         │
-/ai-practice-pick → scripts/list.js → lib/draft.js (buildProbePrompt → 主对话起草 → 采访 → buildFinalizePrompt → 主对话起草 → Write) → WEEKLY_DIR
+/ai-practice-pick → scripts/list.js → 主对话起草(Peterson 流程 + 4 路 peer review)→ WEEKLY_DIR
 ```
 
-**起草流程完全在主对话内 agent 化驱动**(不 spawn `claude -p`,不再有 prompt 模板,不再有内容审计探针,也不再有 AI 味形式自检):
-1. slash command(`commands/ai-practice-pick.md`)按步描述工作流,主 Claude 用自己的工具
-   (Read / Bash / grep / jq)按需取证,边看边判断"够了"就停
-2. **5a 采访补证据**:主 Claude 出 1-3 道题(LLM 看不出的事:动机、真实 ROI、备选方案、复用面),
-   一次 `AskUserQuestion`(API 上限 4)收完
-3. **5b 大纲(Claude 先草一份 + 一次 AskUserQuestion)**:Claude 起草后一次 `AskUserQuestion`
-   二选一 — "采纳 (推荐)" / "我有想法(Other 接受任意输入:大纲/主张/想保留的内容...)"。
-   强烈建议用户走 Option 2 给点东西 — AI 不会读心术,30 秒写一句主张比 Claude 猜半天值。
-4. **5c 段落起草**:先把短 `STYLE_GUIDE`(3-8 行,只指方向)读进上下文,然后按大纲一行写一段,
-   每段 3-6 句
-5. **5d/5e Peterson 修订**:一遍砍句、一遍砍段+重排。原话"试着删掉每一句,不出问题就删"
-6. **5f 反推大纲 sanity check**:从修剪后的版本反推主题句,跟原大纲对比;差异大且事后大纲松散
-   就**回 5d/5e 循环到通过**。一次过把事情做对
-7. **5g 5 路 subagent 同行评审(必须通过)**:5 个并行 `Agent` (`subagent_type: "general-purpose"`)
-   分别扮 AI 审查员 / 同级同事 / 技术专家 / 公司老板 / 技术文档撰写专家。
-   收齐反馈后必改项全部应用,再过一遍 5f sanity;有评审打"不合格"就第二轮再来一次,
-   直到全员"合格 / 边缘"。$0.10-0.30 / 案例。
-8. **5h 落盘**:`titleToSlug` 拼 `<期号>-<slug>.md`,`Write` 写到 `~/.ai-best-practice/weekly/`。
-   这就是最终版本,不假设用户会再 review
-9. 单案例 H1 直接是案例名,无 H2;多案例 H1 是期号,每案 H2 是案例名
-
-**为什么换成 Peterson 写作流程 + 短 STYLE_GUIDE**:这块经历了三轮控制起草质量的尝试 ——
-**v1** 用 AUDITOR_LENS(7 条内容审计探针)+ 写作结构模板让产出读起来像"很懂规范的 AI 写的",
-约束本身就是均值化锚点。
-**v2** 改成摸用户语气画像(从历史 jsonl 采用户真实发言)+ AI_TELLS(Wikipedia "Signs of AI
-writing" 6 类形式 tell 密度自检)。仍然不像用户写的 —— 因为聊天和写作是两种语域,采样聊天画
-出的画像本身错位;而且 AI_TELLS 是事后形式补救,救不了结构性的 AI 思考方式(从大纲到段落到
-收尾,整体气质是 LLM 的)。
-**v3(当前)** 改用 Jordan Peterson 的 Essay Writing Guide(大纲先行 → 段落 → 砍句 → 砍段
-→ 反推大纲做 sanity check),通过预设结构和修剪让作者真正想清楚。落盘前必过 **5 路 subagent
-同行评审**(AI 审查员 / 同级同事 / 技术专家 / 公司老板 / 技术文档撰写专家 并行 Agent),
-保证产出能直接交付不返工。语域只剩一份**短** `STYLE_GUIDE`(3-8 行,只指方向,不列规则)。
-一旦在 STYLE_GUIDE 里列具体 do/don't 或贴示例就退化回 v1/v2 失败模式 —— 规则本身变成均值化
-锚点。`test/draft.test.js` 锁了行数上限。
+**起草流程完整描述在 `commands/ai-practice-pick.md`(步 5a-5i),演化史 + 历代失败模式在 `scripts/lib/draft.js` 头注。** 不要把 `claude -p` 子进程、AUDITOR_LENS、AI_TELLS、摸用户语气画像、句式打散这类后处理规则加回来 — 都已被证实是均值化锚点,见 draft.js 头注。
 
 Key design points to preserve when modifying:
 
 - **Scoring 走子进程,Drafting 不走**:`lib/score.js` `spawn('claude', [...])` 跑 Haiku
   (`--bare --no-session-persistence` 防止 scorer 自己的会话被 hook 递归索引)。
-  `lib/draft.js` **不**起子进程,**不再有 prompt 模板**,**不再有内容审计探针**,
-  **也不再有 AI 味形式自检** — 它只 export 三样裸物料:`STYLE_GUIDE`(短风格方向锚,
-  3-8 行,只指方向不列规则)、`titleToSlug`、`extractTitle`。
-  整个起草工作流(取证 → 采访 → 大纲 → 段落 → 砍句 → 砍段 → 反推大纲 → 落盘)由
-  `commands/ai-practice-pick.md` 描述,主 Claude 在自己的上下文里 agent 化驱动 —
-  按 Jordan Peterson Essay Writing Guide 的步骤走,起草段落前读一次 STYLE_GUIDE。
-  好处:复用主会话的鉴权 + 1M context,不走 Anthropic 的"长上下文 Extra Usage"
-  计费档(否则 429)。不要把"主对话直起草"再退回 `claude -p`,也不要把 AUDITOR_LENS /
-  AI_TELLS / 摸语气画像 加回来 — 它们都已被证实是均值化锚点(见 lib/draft.js 头注的演化史)。
+  Drafting 直接在主对话里跑,复用主会话鉴权 + 1M context,避开 Anthropic 长上下文 Extra Usage 计费档。
 - **mtime cache** in `scan.js` / `scan-session.js`: a row is skipped when
   `existing.jsonlMtime === card.jsonlMtime`. Don't break this — full re-scoring
   the author's local 346-session corpus cost ~$10, and the cache is the only
@@ -143,9 +102,6 @@ Key design points to preserve when modifying:
 - **Stub filter**: `claude -p --no-session-persistence` still writes a ~120-byte
   ai-title stub into `~/.claude/projects/`. `scan.js` drops anything under 500B
   (`STUB_SIZE_THRESHOLD`) before paying parse cost.
-- **Score parse retry**: `lib/score.js#scoreCard` retries once on JSON parse error
-  only (not on timeout/crash) — Haiku occasionally ignores the schema. SYSTEM is
-  deliberately strict ("第一个字符必须是 `{`"); don't soften it.
 - **Hook is best-effort + uses SessionEnd not Stop**: `on-stop.sh` backgrounds
   `nohup node scan-session.js` and always `exit 0`. Failures only go to the log;
   never block session shutdown. The hook is wired to **SessionEnd** (fires once

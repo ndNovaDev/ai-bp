@@ -7,7 +7,7 @@ allowed-tools: [Bash, AskUserQuestion]
 
 清空打分缓存 = 删除 `~/.ai-best-practice/data/index.jsonl`(可用 `AIBP_DATA_DIR` 覆盖根目录)。
 
-下次跑 `/ai-practice-scan` 会**重新评分所有会话**(每条 ~$0.054,作者本机 346 条 ≈ $19),所以这是个破坏性操作 — 必须先确认。
+下次跑 `/ai-practice-scan` 会**重新评分所有会话**(真实单价以标定批为准,启发式预筛会压不少;参考量级:几百条会话粗估几美元到十几美元),所以这是个破坏性操作 — 必须先确认。
 
 `weekly/` 下的周报文件和 `logs/` **不会**被动。
 
@@ -29,9 +29,7 @@ node ${CLAUDE_PLUGIN_ROOT}/scripts/clear-cache.js --info
 
 ### 步 2 — 用 AskUserQuestion 确认
 
-按 `rows × $0.054` 粗估下次重评的成本(单条均值来自前次标定批)。
-
-`question`:`即将删除 N 条评分记录(X KB)。下次 /ai-practice-scan 会重新评所有会话,粗估约 $Y。继续?`
+`question`:`即将删除 N 条评分记录(X KB)。下次 /ai-practice-scan 会重新评所有会话(成本以标定批为准)。继续?`
 
 - Option 1:`确认清空`
 - Option 2(默认):`取消`

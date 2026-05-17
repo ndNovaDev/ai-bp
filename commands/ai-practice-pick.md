@@ -36,6 +36,7 @@ allowed-tools: [Bash, Read, Write, AskUserQuestion]
 | 关于 X 的 / X 相关 | `--tag X`(X 取自 automation/refactor/debug/meta/integration/design/docs/infra/data/learning 等) |
 | 高分的 | `--min-score 80` |
 | 前 N 条 | `--top N` |
+| 不限分数 / 全部 | `--full` |
 
 意图可叠加。"上个月关于自动化的高分 5 条"拼出来就是 `--last-month --tag automation --min-score 80 --top 5`。
 
@@ -115,13 +116,11 @@ AskUserQuestion 一屏最多 4 个选项。所以一次只展示 top 4;用户都
 
 多个 topic 各自跑一遍步 4。
 
-### 步 5 — 起草 + 评审(Peterson 流程 + 5 路 subagent 同行评审)
+### 步 5 — 起草 + 评审
 
-起草由主 Claude 全程负责。流程是一条线:大纲先行、段落生成、砍句、砍段、反推大纲做 sanity check、5 路 subagent 同行评审、落盘最终版本。前半段靠预设结构把事情想透,后半段靠并行 peer review 兜住主对话自查不出的低质量。
+主 Claude 全程负责。Peterson 流程:大纲 → 段落 → 砍句 → 砍段 → 反推大纲 sanity check → 4 路 peer review → 落盘。
 
-风格只剩一份**短** `STYLE_GUIDE`(3-8 行,指方向,不列规则)。5c 开始写段落之前读一次。
-
-`scripts/lib/draft.js` 导出三样:`STYLE_GUIDE`、`titleToSlug`、`extractTitle`。
+`scripts/lib/draft.js` 导出 `STYLE_GUIDE` / `titleToSlug` / `extractTitle`。5c 起草段落前读一次 STYLE_GUIDE。
 
 #### 5a — 采访补证据(按 topic)
 
@@ -155,9 +154,9 @@ answers 收上来后按 questions 原顺序对齐。用户走 Other 或跳过的
 
 #### 5b — 大纲(Claude 先草一份 + 一次 AskUserQuestion 收用户输入)
 
-证据(步 4)+ 答复(5a)凑齐,下一条回复里直接草大纲。一行一段主题句,**5-12 行**之间。案例短就 5 行,长就 12 行,不必凑数。
+证据(步 4)+ 答复(5a)凑齐,下一条回复里直接草大纲。一行一段主题句,**5-12 行**。
 
-**结构必须随机抽选,且禁用线性时间叙事**。"起因 → 决定 → 实现 → 踩坑 → 效果 → 未来"以及任何"按事件发生顺序铺陈"的变体,一律不允许。你脑子里第一个冒出来的大纲若是这条线性叙事,**整稿推倒,换一种重来**。具体换成哪种结构,当场决定 — 此处不提供清单。一旦给清单,清单本身就会变成新的均值锚,等于没换。
+主题句写事实/动作/状态("做了什么 / 当前是什么样"),不写感想/金句/自我表态。线性时间叙事(起因→决定→实现→踩坑→效果)默认不取;脑子里第一稿是这条就换一种 — 换成什么当场决定,不预设清单。
 
 形状(fenced 贴出来):
 
@@ -167,12 +166,6 @@ answers 收上来后按 questions 原顺序对齐。用户走 Other 或跳过的
 3. <主题句>
 ...
 \`\`\`
-
-要求:
-
-- **主题句必须是事实、动作或状态** —— 描述"发生了什么 / 做了什么 / 当前是什么样"。禁止反思、判断、感想、立场、金句、自我表态、标语化。"X 是关键 / X 真的难 / 我接受 X / X 才是答案 / 哪怕 X 也 Y" 这类一律砍。每行回答"事情是什么",不回答"作者怎么想"。
-- 排出来的顺序就是文章段落顺序。
-- 信息密度低的行直接砍。宁可少一段,不要凑。
 
 然后一次 `AskUserQuestion`,二选一:
 
@@ -220,19 +213,18 @@ node -e 'console.log(require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/draf
 - 差异大但事后大纲更连贯 → 通过。说明写的过程中真想清楚了。
 - 差异大且事后大纲散 → 回 5d/5e 重新组织段落,循环到通过。
 
-#### 5g — 5 路 subagent 同行评审(必须通过)
+#### 5g — 4 路 subagent 同行评审(必须通过)
 
-落盘前必须过 5 路 peer review。每路一个独立 `Agent` 调用(`subagent_type: "general-purpose"`),**5 个 Agent 必须在同一条 message 里并行发出**(一个 tool block 多个 tool_use)。每路只看你给的文章全文 + 它自己的角色 prompt,返回结构化反馈。
+落盘前必须过 4 路 peer review。每路一个独立 `Agent` 调用(`subagent_type: "general-purpose"`),**4 个 Agent 必须在同一条 message 里并行发出**(一个 tool block 多个 tool_use)。每路只看你给的文章全文 + 它自己的角色 prompt,返回结构化反馈。
 
-5 路角色分工:
+4 路角色分工:
 
 | # | 角色 | 关注 |
 |---|---|---|
 | 1 | **AI 审查员** | 哪段读起来像 LLM 写的?AI 味整体打几分?**收束反射重点查**:段尾切到作者视角发金句、做判断、写"哪怕 X 也 Y"让步、自我表态("我接受 / 我觉得 / 我承认"),或抛 punchy 总结句 —— 任何"作者站出来发言"的句子,标必改。 |
-| 2 | **同级同事**(同 level 工程师) | 我会读完吗?学到了什么?哪里不清楚? |
+| 2 | **同级同事 + 文档专家**(同 level 工程师 + 技术写作视角) | 我会读完吗?学到了什么?哪里不清楚?结构合理吗?段落-句子层级清晰吗? |
 | 3 | **技术专家**(20 年资深) | 技术上有漏洞吗?缺关键 context 吗?反方案讨论过吗? |
 | 4 | **公司老板**(VP / CEO 视角) | ROI 在哪?复用面有多大?业务影响讲清楚了吗? |
-| 5 | **技术文档撰写专家** | 结构合理吗?扫读性 OK 吗?段落-句子层级清晰吗? |
 
 每个 Agent 的 prompt 模板(把 `<ARTICLE>` 换成你修订后的全文):
 
@@ -259,28 +251,16 @@ node -e 'console.log(require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/draf
 不要复述文章内容。不要展开赞美。聚焦你这个角色最该提的问题。
 \`\`\`
 
-并行 5 路发完、反馈收齐之后,主对话走以下 6 步:
+并行 4 路发完、反馈收齐之后,主对话走以下 6 步:
 
 1. **合并去重**。不同角色提了类似问题,合并。
 2. **按严重度排序**。必改在前,可选在后。
 3. **必改全部应用**。回 5c/5d/5e 重写对应段落或句子。
 4. **可选挑 0-2 条最关键的应用**。
 5. 改完之后再过一次 5f 反推大纲 sanity check,防止改出新的结构问题。
-6. 任何一路打了"不合格" → 必改应用完之后,再发第二轮 5 路评审。一直到全员"合格 / 边缘"为止。
+6. 任何一路打了"不合格" → 必改应用完之后,再发第二轮 4 路评审。一直到全员"合格 / 边缘"为止。
 
-#### 5h — 句式打散(必须做)
-
-**默认 5g 出来的版本不合格**,必须经过这一步重写才能进 5i。
-
-**逐 sub-sentence 打散**。每个逗号、句号、冒号、分号之间的字符都必须换。每个分句至少动一项:起头、动词、修辞、句式、长度。具体动几项随机,改动幅度随机。
-
-前提:叙述准确,读起来通顺。除此之外不设任何风格目标 —— 不要刻意"口语化"、不要刻意"正式化"、不要刻意贴近某类人的语感。语域让它从内容自己长出来。
-
-打散完反向看一遍 — 如果能从你的改动里抠出一条 SOP(每个分句都做了同一项变换、同一类词每次都换成同一类、改动密度在每段之间高度一致,等等),**整版推倒重做**。
-
-完成后进 5i。
-
-#### 5i — 落盘(最终版本)
+#### 5h — 落盘(最终版本)
 
 \`\`\`bash
 node -e '
@@ -295,9 +275,9 @@ console.log(path.join(WEEKLY_DIR, process.env.WEEK_PREFIX + "-" + titleToSlug(pr
 
 写出去就是最终版本。不假设用户会再 review。
 
-#### 5j — 多 topic 情况
+#### 5i — 多 topic 情况
 
-用户在步 3 勾了 ≥ 2 个 topic 的情况下,每个 topic 各自跑一遍 5a + 5b + 5c + 5d + 5e + 5f。所有 topic 段落修订完之后,一次性跑 5g 5 路评审 — reviewer 看完整的多 topic 文章,不要逐 topic 评。评审整改完之后再统一跑一次 5h 句式打散。最后一次 5i 写多 topic 版的 markdown:H1 是期号,每 case H2 是案例名。
+用户在步 3 勾了 ≥ 2 个 topic 的情况下,每个 topic 各自跑一遍 5a + 5b + 5c + 5d + 5e + 5f。所有 topic 段落修订完之后,一次性跑 5g 4 路评审 — reviewer 看完整的多 topic 文章,不要逐 topic 评。整改通过后一次 5h 写多 topic 版 markdown:H1 是期号,每 case H2 是案例名。
 
 单 topic 涵盖多 session 仍按单 topic 处理。这是一件事,不是多件事。聚类的意义就在这。
 
@@ -308,19 +288,4 @@ console.log(path.join(WEEKLY_DIR, process.env.WEEK_PREFIX + "-" + titleToSlug(pr
 
 输出落在 `~/.ai-best-practice/weekly/`。想换地方用 `AIBP_DATA_DIR` 覆盖。这个路径不在插件目录里,所以插件升级不会丢历史输出。
 
-## 内部脚本支持的 flag(供你拼接)
-
-| flag | 含义 |
-|---|---|
-| 无参数 | 全周期 score≥60 top 30 |
-| `--this-week` / `--last-week` | 本/上 ISO 周 |
-| `--this-month` / `--last-month` | 本/上月 |
-| `--today` / `--yesterday` | 今/昨 |
-| `--recent 7d` | 最近 N 天(d/w/m) |
-| `--week 2026-W20` | 指定 ISO 周 |
-| `--month 2026-05` | 指定月 |
-| `--since YYYY-MM-DD` `--until YYYY-MM-DD` | 自定义区间 |
-| `--tag X` | 按 tag 过滤 |
-| `--min-score 70` | score 下限(默认 60) |
-| `--top N` | 取前 N(默认 30) |
-| `--full` | 不限 min-score |
+完整 flag 列表见 `scripts/list.js` 文件头注释。

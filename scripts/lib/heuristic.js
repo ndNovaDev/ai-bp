@@ -9,6 +9,8 @@
 
 const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 
+const NO_EDIT_NOTE = '没有任何文件改动(代码/文档/配置/脚本都没动)';
+
 function totalToolCalls(tools) {
   if (!tools) return 0;
   let n = 0;
@@ -38,7 +40,7 @@ function tryHeuristicScore(card) {
   if (turns <= 3 && !hasEditTool(card.tools) && filesCount === 0 && commits === 0) {
     return {
       score: 10,
-      summary: '短对话(≤3 轮),没有任何文件改动(代码/文档/配置/脚本都没动)。本地启发式判定为低值会话。',
+      summary: `短对话(≤3 轮),${NO_EDIT_NOTE}。本地启发式判定为低值会话。`,
       highlights: [],
       tags: ['chat'],
       cost: 0,
@@ -52,7 +54,7 @@ function tryHeuristicScore(card) {
   if (totalTools < 5 && !hasEditTool(card.tools) && filesCount === 0 && commits === 0 && turns < 6) {
     return {
       score: 15,
-      summary: '少量工具调用(<5 次),没有任何文件改动(代码/文档/配置/脚本都没动),轮次也低。本地启发式判定为低值会话。',
+      summary: `少量工具调用(<5 次),${NO_EDIT_NOTE},轮次也低。本地启发式判定为低值会话。`,
       highlights: [],
       tags: ['chat'],
       cost: 0,

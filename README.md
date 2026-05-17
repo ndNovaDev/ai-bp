@@ -112,35 +112,17 @@ SessionEnd hook 后台异步打分并写入 `~/.ai-best-practice/data/index.json
 /ai-practice-pick 最近一周高分前 5 条
 ```
 
-流程:列出候选 → AI 二次排序(时效/多样/完整度) → `AskUserQuestion` 给你勾 1–3 条 →
-**主对话的 Claude**(就是你正在用的那个会话)按需收集证据(jsonl 元数据 / git log / 关键文件)
-→ 出 1–3 道采访题(补 LLM 看不出的动机 / 真实 ROI / 杠杆) → 一次 `AskUserQuestion` 一屏问完 →
-**Claude 先草大纲 + 一次 `AskUserQuestion`(Other 接受任意输入:大纲/想法/主张/想保留的内容...)** →
-按 Peterson 流程(段落生成 → 砍句 → 砍段 → 反推大纲)→ **5 路 subagent 同行评审**
-(AI 审查员 / 同级同事 / 技术专家 / 公司老板 / 技术文档撰写专家 并行) → `Write` 到
-`~/.ai-best-practice/weekly/<期号>-<案例名 slug>.md`。
+流程:列出候选 → AI 二次排序 → `AskUserQuestion` 勾 1–3 条 → **主对话 Claude** 按需收证据
+(jsonl 元数据 / git log / 关键文件) → 1–3 道采访题补 LLM 看不出的事(动机 / ROI / 杠杆)
+→ **Claude 先草大纲 + 一次 `AskUserQuestion`**(Other 接任意输入) → Peterson 流程(段落 →
+砍句 → 砍段 → 反推大纲 sanity check) → **4 路 subagent 同行评审**(AI 审查员 / 同级同事+文档专家
+/ 技术专家 / 公司老板)→ `Write` 到 `~/.ai-best-practice/weekly/<期号>-<案例名 slug>.md`。
 
-**起草不再 spawn `claude -p`**:终稿就在你当前这个 Claude Code 会话里写,复用你的模型(通常已是 1M 上下文),
-共享鉴权,token 走 `/cost`。peer review 是 5 个 subagent 并行,每路一次 general-purpose Agent
-调用 (~$0.10-0.30 / 案例)。
+起草直接在你当前会话里跑,复用模型 + 鉴权,token 走 `/cost`。peer review ~$0.10-0.30 / 案例。**落盘即最终版本** —— 不假设你回头会 review。
 
-起草走 **Jordan Peterson Essay Writing Guide 流程**:大纲 → 段落生成 → 砍句 → 砍段 → 反推大纲做
-sanity check。预设结构撬动作者把事情真想清楚,比事后形式审查有效。落盘前必过 **5 路 subagent
-同行评审**(每路独立角色 prompt,并行,降低 echo chamber),必改项全部应用。**落盘的是最终版本**
-—— 不要假设你回头会 review。
+**强烈建议自己给个大纲或主张** —— 哪怕一句"重点是 X"也行。Claude 能拼出"你做了什么",但不知道你想突出哪条线。流程会一次 `AskUserQuestion` 让你二选一("采纳" / "Other 任意输入")。
 
-**强烈建议你自己提供想法或大纲** —— 哪怕是 3-5 条 bullet 也行。Claude 不会读心术,它能从证据拼出
-"你做了什么",但**不知道**你想突出哪条线、想给读者什么 take-away。自动起草的大纲多半不会是你
-心里那张图。给自己 30 秒写主张比 Claude 猜半天值。流程会**一次** `AskUserQuestion` 给你
-"采纳 (推荐)" / "我有想法 (Other 任意输入)" 二选一。
-
-唯一的风格锚是一份**短** `STYLE_GUIDE`(3-8 行,只指方向:"按优秀技术文档/指南的标准写")。
-刻意不列具体 do/don't —— 一列就退化成均值化锚点。
-
-老版本带过 `AUDITOR_LENS`(7 条内容审计探针)+ 写作结构模板;后一版换成"摸用户语气画像 +
-AI_TELLS(Wikipedia 'Signs of AI writing' 6 类形式 tell 密度自检)"。都实测过 —— 那些约束本身
-就是均值化锚点,产出读起来仍像"很懂规范的 AI 写的"。整套废了,见 `scripts/lib/draft.js` 头注
-的演化史。
+唯一的风格锚是 `scripts/lib/draft.js` 里一份 3-8 行的 `STYLE_GUIDE`,只指方向不列规则。历代失败的"列规则"尝试(AUDITOR_LENS / AI_TELLS / 摸语气画像 / 句式打散)见 `draft.js` 头注的演化史。
 
 ## 隐私 / 体积
 
