@@ -34,14 +34,21 @@ const NOISE_TAGS = [
   'user-prompt-submit-hook',
   'ide_selection',
 ];
-const NOISE_RE = new RegExp(
-  `<(?:${NOISE_TAGS.join('|')})>[\\s\\S]*?</(?:${NOISE_TAGS.join('|')})>`,
-  'g',
+// 每个 tag 独立一条 regex,确保开闭配对(不会跨 tag 错配吃半截)。
+// 开标签允许可选属性。非贪婪 + 不动点循环,把嵌套场景也清干净。
+const NOISE_RE_LIST = NOISE_TAGS.map(
+  (t) => new RegExp(`<${t}(?:\\s[^>]*)?>[\\s\\S]*?</${t}>`, 'g'),
 );
 
 function stripFrameworkNoise(text) {
   if (!text) return '';
-  return String(text).replace(NOISE_RE, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  let s = String(text);
+  for (let i = 0; i < 5; i++) {
+    const before = s;
+    for (const re of NOISE_RE_LIST) s = s.replace(re, '');
+    if (s === before) break;
+  }
+  return s.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 
 function textOfContent(content) {

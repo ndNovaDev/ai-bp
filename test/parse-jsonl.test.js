@@ -192,6 +192,13 @@ test('stripFrameworkNoise: 剥掉 slash command / bash / system-reminder 等框�
   // 空 / null 输入
   assert.equal(stripFrameworkNoise(''), '');
   assert.equal(stripFrameworkNoise(null), '');
+  // 嵌套(实际框架不会这么塞,但防御):内外都剥干净,不留残留闭标签
+  assert.equal(
+    stripFrameworkNoise('<system-reminder><command-name>/x</command-name>n</system-reminder>真'),
+    '真',
+  );
+  // 开标签带属性也剥
+  assert.equal(stripFrameworkNoise('<system-reminder foo="bar">x</system-reminder>真'), '真');
 });
 
 test('extractUserTurns: 剥掉框架噪声,纯噪声 turn 被丢弃', async () => {
