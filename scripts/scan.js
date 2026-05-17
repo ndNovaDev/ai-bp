@@ -127,18 +127,28 @@ function cwdAllowed(cwd) {
   return !EXCLUDE_PREFIXES.some((p) => cwd === p || cwd.startsWith(p + '/'));
 }
 
-async function processOne(jsonlPath, indexMap, force) {
+async function processOne(file, indexMap, byPath, force) {
+  // 早 short-circuit:索引里已有该 jsonlPath 且 mtime 一致 → 直接报 cached,
+  // 不去 parse + 跑 git log。否则 147 个老会话每次 pick 都白扫一次(~10s 起步)。
+  if (!force) {
+    const cachedRow = byPath.get(file.path);
+    if (cachedRow && Math.floor(file.mtimeMs / 1000) === cachedRow.jsonlMtime) {
+      return { status: 'cached' };
+    }
+  }
+
   let card;
   try {
-    card = await buildSessionCard(jsonlPath);
+    card = await buildSessionCard(file.path);
   } catch (err) {
-    log(`parse failed ${jsonlPath}: ${err.message}`);
+    log(`parse failed ${file.path}: ${err.message}`);
     return { status: 'error', reason: 'parse' };
   }
   if (!card.sessionId) return { status: 'skipped', reason: 'no-session-id' };
   if (!cwdAllowed(card.cwd)) return { status: 'skipped', reason: 'cwd-excluded' };
   if (card.turns < 2) return { status: 'skipped', reason: 'too-short' };
 
+  // 二次兜底:byPath 没命中但 sessionId 命中(老索引没记 jsonlPath 时会走到这里)。
   const existing = indexMap.get(card.sessionId);
   if (!force && existing && existing.jsonlMtime === card.jsonlMtime) {
     return { status: 'cached' };
@@ -156,7 +166,7 @@ async function processOne(jsonlPath, indexMap, force) {
     try {
       scored = await scoreCard(card);
     } catch (err) {
-      log(`score failed ${jsonlPath}: ${err.message}`);
+      log(`score failed ${file.path}: ${err.message}`);
       return { status: 'error', reason: 'score' };
     }
   }
@@ -217,6 +227,11 @@ async function main() {
   if (args.limit > 0) files = files.slice(0, args.limit);
 
   const indexMap = loadIndex();
+  // byPath:jsonlPath → row。让 processOne 在 parse 之前就能判定缓存命中。
+  const byPath = new Map();
+  for (const row of indexMap.values()) {
+    if (row.jsonlPath) byPath.set(row.jsonlPath, row);
+  }
 
   if (args.countOnly) {
     // 干跑:只数候选,不打分。slash command 用这个做 preflight 估算。
@@ -266,7 +281,7 @@ async function main() {
   await runPool(
     files,
     async (f) => {
-      const res = await processOne(f.path, indexMap, args.rescore);
+      const res = await processOne(f, indexMap, byPath, args.rescore);
       processed++;
       if (res.status === 'ok') {
         stats.ok++;
