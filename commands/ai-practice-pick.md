@@ -6,25 +6,9 @@ allowed-tools: [Bash, Read, Write, AskUserQuestion]
 
 # ai-practice-pick
 
-找素材、写作文,两件事一条流水线。默认是全周期高分;要缩范围,自然语言告诉它即可。
+## 步 0 — 自然语言 → flag
 
-## 你(Claude)收到的参数
-
-`$ARGUMENTS` 透传用户原话。例子:
-
-- "本周" / "这周" / "最近一周"
-- "最近三天" / "近 3 天" / "过去 72 小时"
-- "上个月" / "5 月份关于自动化的"
-- "高分的最近 10 条"
-- "" 或 "默认" — 全周期 score≥60 top 30
-
-## 工作流(严格按顺序执行)
-
-### 步 0 — 解析自然语言为脚本 flag
-
-查表即可。无需 LLM。
-
-| 用户说 | 你解析为 |
+| 用户说 | flag |
 |---|---|
 | 本周 / 这周 | `--this-week` |
 | 上周 | `--last-week` |
@@ -33,259 +17,90 @@ allowed-tools: [Bash, Read, Write, AskUserQuestion]
 | 本月 | `--this-month` |
 | 2026-05 / 5 月 | `--month 2026-05` |
 | 自 5 月 1 日以来 | `--since 2026-05-01` |
-| 关于 X 的 / X 相关 | `--tag X`(X 取自 automation/refactor/debug/meta/integration/design/docs/infra/data/learning 等) |
+| 关于 X 的 / X 相关 | `--tag X` |
 | 高分的 | `--min-score 80` |
 | 前 N 条 | `--top N` |
-| 不限分数 / 全部 | `--full` |
+| 不限 / 全部 | `--full` |
+| 空 / 默认 | 无参数(全周期 score≥60 top 30) |
 
-意图可叠加。"上个月关于自动化的高分 5 条"拼出来就是 `--last-month --tag automation --min-score 80 --top 5`。
+可叠加。下面用 `$FLAGS` 代指拼出来的串。
 
-### 步 0.5 — 静默 scan 兜底(必跑)
-
-hook 不可靠。关窗、`/exit`、强杀都会让 SessionEnd 漏掉。因此 pick 一开始先把最近 14 天静默扫一遍,漏网的 session 顺手补上索引。mtime cache 在,扫到旧条目直接跳过,几乎不花钱。
+## 步 0.5 — 兜底 scan
 
 ```bash
 node ${CLAUDE_PLUGIN_ROOT}/scripts/scan.js --recent 14d
 ```
 
-正常半分钟内跑完。新 session 多就久一点。报错或超时无碍,索引主体还在,继续步 1。这一步不向用户解释。
+报错或超时无碍。不向用户解释。
 
-### 步 1 — 拉候选粗排
+## 步 1 — 拉候选
 
 ```bash
-node ${CLAUDE_PLUGIN_ROOT}/scripts/list.js <你解析出的 flag>
+node ${CLAUDE_PLUGIN_ROOT}/scripts/list.js $FLAGS
 ```
 
-脚本回一个 JSON 数组,按 score 倒序,前 N 条。空数组意味着没有候选;告诉用户"无候选,可能需要先 `/ai-practice-scan` 或放宽过滤",到此为止。
+返回按 score 倒序的 JSON 数组。空数组 → 告诉用户"无候选,可放宽过滤或先 `/ai-practice-scan`",结束。
 
-### 步 2 — 你(主 Claude)自己聚类 + 重排
+## 步 2 — 聚类 + 排名
 
-不开子进程,不调 Haiku。候选 JSON 顶多几十 KB,塞进上下文绰绰有余。下一条回复里贴一个 fenced JSON code block,顺手完成两件事。
+下一条回复里贴 fenced JSON。同一件事的多个 session 合到一个 topic(信号:summary / tags / cwd / highlights 组合,同 cwd 不等于同 topic)。按"作为 OKR 周报案例的合适度"排 rank,保留前 8。
 
-**聚类**。同一件事的多个 session 合并到一个 topic 里。判断信号来自 summary、tags、cwd、highlights 的组合,不能硬编码"同 cwd 即同 topic"。同仓库的不同 feature 必须分开;反过来,不同仓库的同类工具迭代倒是该合。为什么聚类?用户视角里"一件事"才是一等公民。举例:这个工具自身的 4 次迭代会话,合成一个 topic 让用户挑,远比把 4 条高度相似的候选都摆出来要好。
-
-**排序**。按"作为 OKR 周报案例的合适度"给 topic 排名,rank=1 最好。打分时综合时效、tag 多样性、故事完整度、产物可分发性。
-
-输出形状如下,后续步骤直接引用:
-
-\`\`\`json
+```json
 {
   "topics": [
     {
-      "title": "企业级 AI 评分系统四层架构",
-      "sessionIds": ["abc-123", "def-456", "..."],
-      "primarySessionId": "abc-123",
+      "title": "8-20 字事件名",
+      "sessionIds": ["..."],
+      "primarySessionId": "...",
       "rank": 1,
-      "reason": "工具四次迭代收口为一个 plugin,产物完整可分发"
+      "reason": "≤30 字:聚合理由 + 排序理由"
     }
   ]
 }
-\`\`\`
+```
 
-具体要求:
+## 步 3 — 用户挑 topic
 
-- title 8-20 字,描述事件,不是某次会话。
-- primarySessionId 选信息最完整或 score 最高的那条。
-- reason 不超过 30 字,聚合理由一句、排序理由一句。
-- 按 rank 升序,保留前 8 个。明显独立的事项不要硬塞一起。
+`AskUserQuestion`(`multiSelect: true`),top 4:
 
-### 步 3 — 用户挑 topic
+- `label`: `[最高分 N|涵盖 M session] <title>`
+- `description`: AI 的 `reason` + 日期跨度
 
-通过 **AskUserQuestion**(`multiSelect: true`)呈现 top topic。
+用户勾 1-3 个。
 
-- label 形如 `[最高分 88|涵盖 4 session] 企业级 AI 评分系统四层架构`。其中最高分取 topic 内 max(session.score),session 数取 sessionIds.length。
-- description 写 AI 的 reason(聚合理由 + 排序理由),后面接一句涵盖范围(日期跨度)。
-- 用户从中勾选 1-3 个。
+## 步 4 — 取证(逐 topic)
 
-AskUserQuestion 一屏最多 4 个选项。所以一次只展示 top 4;用户都不满意,翻下一屏(5-8)。同一 topic 内的多个 sessionId 不要拆成多个选项。
+按顺序取,够下笔就停。**core 是前两步,后两步是核对/补刀。**
 
-### 步 4 — 你(主 Claude)自己取证
+1. **元数据**:`~/.ai-best-practice/data/index.jsonl` grep sessionIds,合 tags / filesEdited / 时间窗。框定 scope。
+2. **user 消息原文**(主证据 — 用户的真实意图 / 卡点 / 转折):
+   ```bash
+   node ${CLAUDE_PLUGIN_ROOT}/scripts/lib/parse-jsonl.js --user-turns <jsonl-path>
+   ```
+   jsonl 路径在 index.jsonl 行的 `jsonlPath` 字段。输出按时间序的 `[ts]\n<text>\n---\n` 块,体量小(几十 KB 级)。这是周报唯一没被 Haiku 摘要过滤掉的"人话",assistant 输出不抽 — 那部分已经在 git 里物化。如需控量,加 `--max-chars 400`。
+3. **git**(核对"做了什么" — 是否真落地):进 cwd,`git log --since=<起> --until=<止> --oneline`,关键 1-3 commit 跑 `git show --stat <hash>`,需要 patch 时只看怀疑的那个文件 `git show <hash> -- <file>`
+4. **artifact**(补刀 patch 细节):filesEdited 挑 1-3 个,`Read` 加 offset/limit,一次 ≤ 200 行
 
-逐个处理选中的 topic。手头有 sessionIds 和元数据,用自己的工具按需收集证据。叙事对象是事件,产物比对话重要。看到能下笔了就停。
+**严禁**直接拿 index.jsonl 里 Haiku 生成的 `summary` / `highlights` 当起草素材 —— 那是二手压缩,起草锚到它就是在抄摘要,正是历代 reviewer 失败的根因(见 `scripts/lib/draft.js` 头注)。`summary` / `tags` 只用于步 2 聚类、步 3 选题。
 
-清单仅供参考,不必按顺序、不必全跑。视 topic 性质自选。
+## 步 5 — 起草 + 落盘
 
-- **session 元数据**。从 `~/.ai-best-practice/data/index.jsonl` 按 sessionIds grep 出对应行,合并 tags / tools / skills / mcpServers / filesEdited;时间窗取 `[min(startedAt), max(endedAt)]`。
-- **git 证据(优先级最高)**。进入 session 的 cwd,先 `git log --since=<起> --until=<止> --oneline` 扫一眼。挑跟 topic 标题或 tags 最相关的 1-3 个 commit,跑 `git show --stat <hash>` 看变更概览。stat 不足以判断意图时,才动 `git show --patch` 翻 diff 原文;且只看你怀疑的那个文件(`git show <hash> -- <file>`),整块 patch 不要。
-- **artifact 原文**。filesEdited 合并完后挑 1-3 个最能说明问题的文件(.md 或关键代码),`Read` 即可,一次最多 200 行(用 offset/limit 参数,不要整文件读)。够了停。
-- **对话流水**。默认跳过。只有当 git 与 artifact 都解释不了作者动机时,才回头 Read 对应 sessionId 的 jsonl 文件,头 40 行加尾 40 行(`head -n 40` + `tail -n 40`)。
+直接写。落盘路径:
 
-判断"够了"的标准:动机—方案—得失都能讲清楚。不追求覆盖所有证据,追求够下笔。
-
-取证过程不要复述文件原文,不要做信息搬运。脑子里有就行。起草直接用。
-
-多个 topic 各自跑一遍步 4。
-
-### 步 5 — 起草 + 评审
-
-主 Claude 全程负责。Peterson 流程:大纲 → 段落 → 砍句 → 砍段 → 反推大纲 sanity check → 4 路 peer review → 落盘。
-
-`scripts/lib/draft.js` 导出 `STYLE_GUIDE` / `titleToSlug` / `extractTitle`。5c 起草段落前读一次 STYLE_GUIDE。
-
-#### 5a — 采访补证据(按 topic)
-
-步 4 收的证据已在工作记忆里。这步基于它们,直接在下一条回复里产出 fenced JSON。**不要回去 Read / Bash / 取证**。该收的已经收够。
-
-形状:
-
-\`\`\`json
-{
-  "questions": [
-    {
-      "question": "本次最痛的痛点是什么?",
-      "header": "动机",
-      "options": ["每周手动翻历史耗时", "周报内容主观难复用", "想试 Claude Code 的 hook 能力"]
-    }
-  ]
-}
-\`\`\`
-
-约束:
-
-- questions 控制在 **1-3 题**。明显没什么可问就 1 题或不问。题数越多,5c 起草时把每个答案塞进文章的压力越大。AskUserQuestion 硬上限是 4。
-- 专问 LLM 从证据看不出来的事:动机、痛点强度、被淘汰的备选、真实 ROI、复用面、走过的弯路、当时心理。
-- 每题 options 2-3 个。第一个写基于证据的最佳猜测;用户直接点 = 静默接受。
-- header 自取一个 2-4 字短标签,贴题意(动机/选型/坑/复盘 等)。
-- 中文要口语化,用户瞄一眼即懂。
-- 不要预先写正文段落。采访是补证据,不是搭脚手架。
-
-将 questions 一次性打包到 `AskUserQuestion`,字段对应:`question` / `header` / `options`(第一个 label 后面加 ` (推荐)`)。
-answers 收上来后按 questions 原顺序对齐。用户走 Other 或跳过的,answer 置 `null`。
-
-#### 5b — 大纲(Claude 先草一份 + 一次 AskUserQuestion 收用户输入)
-
-证据(步 4)+ 答复(5a)凑齐,下一条回复里直接草大纲。一行一段主题句,**5-12 行**。
-
-主题句写事实/动作/状态("做了什么 / 当前是什么样"),不写感想/金句/自我表态。线性时间叙事(起因→决定→实现→踩坑→效果)默认不取;脑子里第一稿是这条就换一种 — 换成什么当场决定,不预设清单。
-
-形状(fenced 贴出来):
-
-\`\`\`
-1. <主题句>
-2. <主题句>
-3. <主题句>
-...
-\`\`\`
-
-然后一次 `AskUserQuestion`,二选一:
-
-- "采纳 (推荐)" → 直接进 5c
-- "我有想法 / 改动(在 Other 里告诉我:大纲、主张、想说的话、想保留的内容、重点是 X、删 X 段...都行)"
-  → 把 Other 里的内容吃进来(扩写 / 替换 / 嵌入大纲),进 5c
-
-强烈推荐用户走 Option 2。哪怕只是一句"重点要 X"或"删 X 那段",都比什么都不给强。Claude 不会读心术 — 从证据它能拼出"你做了什么",但不知道你想突出哪条线、想让读者带走什么。Option 2 的 Other 字段什么都收:完整大纲、几个 bullet、一句指令都行。
-
-#### 5c — 段落起草
-
-先把 STYLE_GUIDE 读进上下文:
-
-\`\`\`bash
-node -e 'console.log(require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/draft").STYLE_GUIDE)'
-\`\`\`
-
-照着大纲一行写一段。每段 **3-6 句**。宁多勿少;反正 5d 拿砍刀回来收拾。
-
-**避免"知识的诅咒"**。后文才定义的概念、术语、缩写、内部黑话,不许在前文先出现 — 哪怕只是顺手举例。前文用到的每个名词,必须在它出现的位置(或更前面)就能站得住 — 要么是通识,要么前文已经落地过。需要某个后定义的术语,就把它的解释往前挪,或者把那段叙述往后挪。
-
-不必预设小标题结构。短就一段段平铺过去。长就按事件分小节。看情况办。
-
-#### 5d — 句子级砍刀
-
-逐段重读,每句过一遍:
-
-- 删了,段落还成立吗?成立就删。
-- 有更短、更具体的说法吗?有就换。
-- 跟前后句重复了吗?合并,或删一个。
-
-#### 5e — 段落级砍刀 + 重排
-
-每段问一遍:
-
-- 整段删了,文章还成立吗?成立就删。
-- 顺序对吗?该挪就挪。
-- 跟相邻段冗余吗?合并。
-
-#### 5f — 反推大纲 sanity check(必须通过)
-
-从修剪后的版本反向提取每段主题句,组成"事后大纲"。跟 5b 大纲比对:
-
-- 几乎一致 → 通过,进 5g。
-- 差异大但事后大纲更连贯 → 通过。说明写的过程中真想清楚了。
-- 差异大且事后大纲散 → 回 5d/5e 重新组织段落,循环到通过。
-
-#### 5g — 4 路 subagent 同行评审(必须通过)
-
-落盘前必须过 4 路 peer review。每路一个独立 `Agent` 调用(`subagent_type: "general-purpose"`),**4 个 Agent 必须在同一条 message 里并行发出**(一个 tool block 多个 tool_use)。每路只看你给的文章全文 + 它自己的角色 prompt,返回结构化反馈。
-
-4 路角色分工:
-
-| # | 角色 | 关注 |
-|---|---|---|
-| 1 | **AI 审查员** | 哪段读起来像 LLM 写的?AI 味整体打几分?**收束反射重点查**:段尾切到作者视角发金句、做判断、写"哪怕 X 也 Y"让步、自我表态("我接受 / 我觉得 / 我承认"),或抛 punchy 总结句 —— 任何"作者站出来发言"的句子,标必改。 |
-| 2 | **同级同事 + 文档专家**(同 level 工程师 + 技术写作视角) | 我会读完吗?学到了什么?哪里不清楚?结构合理吗?段落-句子层级清晰吗? |
-| 3 | **技术专家**(20 年资深) | 技术上有漏洞吗?缺关键 context 吗?反方案讨论过吗? |
-| 4 | **公司老板**(VP / CEO 视角) | ROI 在哪?复用面有多大?业务影响讲清楚了吗? |
-
-每个 Agent 的 prompt 模板(把 `<ARTICLE>` 换成你修订后的全文):
-
-\`\`\`
-你是一位[角色],[一句话能力定位]。
-
-我手里有一篇 OKR 周报案例,即将作为最终版本交付。落盘前要过 5 路 peer review,
-你是其中一路。**严格从你的角色视角**审,不要客气。
-
-文章如下:
-===
-<ARTICLE>
-===
-
-按以下结构返回(中文,< 400 字):
-
-1. **整体判定**: 合格 / 边缘 / 不合格 + 一句话理由
-2. **3 条最关键的问题**(没有就少写,严重的先写):
-   - 引具体段落或句子
-   - 说为什么这是问题
-   - 给出改写或修复建议
-3. **必改 vs 可选**: 哪些是必改(不改就不合格),哪些是可选优化
-
-不要复述文章内容。不要展开赞美。聚焦你这个角色最该提的问题。
-\`\`\`
-
-并行 4 路发完、反馈收齐之后,主对话走以下 6 步:
-
-1. **合并去重**。不同角色提了类似问题,合并。
-2. **按严重度排序**。必改在前,可选在后。
-3. **必改全部应用**。回 5c/5d/5e 重写对应段落或句子。
-4. **可选挑 0-2 条最关键的应用**。
-5. 改完之后再过一次 5f 反推大纲 sanity check,防止改出新的结构问题。
-6. 任何一路打了"不合格" → 必改应用完之后,再发第二轮 4 路评审。一直到全员"合格 / 边缘"为止。
-
-#### 5h — 落盘(最终版本)
-
-\`\`\`bash
+```bash
 node -e '
 const path = require("path");
 const { titleToSlug } = require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/draft");
 const { WEEKLY_DIR } = require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/paths");
 console.log(path.join(WEEKLY_DIR, process.env.WEEK_PREFIX + "-" + titleToSlug(process.env.TITLE) + ".md"));
 ' # TITLE=<案例名 或 期号> WEEK_PREFIX=<2026-W20 或 recent-3d>
-\`\`\`
+```
 
-`WEEK_PREFIX` 长得像 `2026-W20`,直接从时间范围里取。没 ISO 周时退回 `recent-3d`。然后 `Write` 落盘到 `~/.ai-best-practice/weekly/<期号>-<slug>.md`。
+`WEEK_PREFIX` 没 ISO 周时退回 `recent-Nd`。`Write` 落盘到 `~/.ai-best-practice/weekly/<期号>-<slug>.md`。
 
-写出去就是最终版本。不假设用户会再 review。
+多 topic:一篇 markdown,H1 是期号,每 topic 一个 H2。
 
-#### 5i — 多 topic 情况
+## 步 6 — 报告
 
-用户在步 3 勾了 ≥ 2 个 topic 的情况下,每个 topic 各自跑一遍 5a + 5b + 5c + 5d + 5e + 5f。所有 topic 段落修订完之后,一次性跑 5g 4 路评审 — reviewer 看完整的多 topic 文章,不要逐 topic 评。整改通过后一次 5h 写多 topic 版 markdown:H1 是期号,每 case H2 是案例名。
-
-单 topic 涵盖多 session 仍按单 topic 处理。这是一件事,不是多件事。聚类的意义就在这。
-
-### 步 6 — 报告
-
-- 输出文件路径。
-- 没选上的 topic(下次还能用),每条标上涵盖几个 session。
-
-输出落在 `~/.ai-best-practice/weekly/`。想换地方用 `AIBP_DATA_DIR` 覆盖。这个路径不在插件目录里,所以插件升级不会丢历史输出。
-
-完整 flag 列表见 `scripts/list.js` 文件头注释。
+- 输出文件路径
+- 未选 topic 列表,每条标涵盖几 session

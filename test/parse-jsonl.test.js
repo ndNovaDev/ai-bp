@@ -4,7 +4,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
-const { buildSessionCard, gitCommitsInWindow } = require('../scripts/lib/parse-jsonl');
+const { buildSessionCard, gitCommitsInWindow, extractUserTurns } = require('../scripts/lib/parse-jsonl');
 
 const FIXTURES = path.join(__dirname, 'fixtures');
 
@@ -136,4 +136,42 @@ test('buildSessionCard: long text in keyTurns is clipped to ~400 chars + ellipsi
     // 我们的 cap 是 400,加一个省略号字符,保守上限 410
     assert.ok(t.text.length <= 410, `keyTurn text too long: ${t.text.length}`);
   }
+});
+
+test('extractUserTurns: small — 1 条真实 user text,tool_result 被过滤', async () => {
+  const turns = await extractUserTurns(path.join(FIXTURES, 'small.jsonl'));
+  assert.equal(turns.length, 1);
+  assert.equal(turns[0].text, '帮我看一下分支');
+  assert.equal(turns[0].ts, '2026-05-10T10:00:00.000Z');
+});
+
+test('extractUserTurns: rich — 3 条 user text,按时间顺序', async () => {
+  const turns = await extractUserTurns(path.join(FIXTURES, 'rich.jsonl'));
+  assert.equal(turns.length, 3);
+  assert.ok(turns[0].text.includes('请用 figma MCP'));
+  assert.equal(turns[1].text, '很好,继续做剩下的');
+  assert.equal(turns[2].text, '搞定了吗?');
+  // 时间戳单调递增
+  assert.ok(turns[0].ts < turns[1].ts && turns[1].ts < turns[2].ts);
+});
+
+test('extractUserTurns: malformed — 跳坏行,留 2 条', async () => {
+  const turns = await extractUserTurns(path.join(FIXTURES, 'malformed.jsonl'));
+  assert.equal(turns.length, 2);
+  assert.equal(turns[0].text, '测试malformed 行处理');
+  assert.equal(turns[1].text, '再问一句');
+});
+
+test('extractUserTurns: empty — 空数组', async () => {
+  const turns = await extractUserTurns(path.join(FIXTURES, 'empty.jsonl'));
+  assert.deepEqual(turns, []);
+});
+
+test('extractUserTurns: maxCharsPerTurn 截断长 prompt', async () => {
+  const turns = await extractUserTurns(path.join(FIXTURES, 'rich.jsonl'), { maxCharsPerTurn: 30 });
+  // 第一条 ≥ 80 字的会被截断到 30 + 省略号
+  assert.ok(turns[0].text.length <= 31, `expected clipped, got len=${turns[0].text.length}`);
+  assert.ok(turns[0].text.endsWith('…'));
+  // 短消息不变
+  assert.equal(turns[1].text, '很好,继续做剩下的');
 });

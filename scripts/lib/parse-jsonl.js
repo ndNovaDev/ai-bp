@@ -179,15 +179,74 @@ async function buildSessionCard(jsonlPath) {
   };
 }
 
-module.exports = { buildSessionCard, gitCommitsInWindow };
+// 起草阶段用:流式抽出 session 里所有真实的 user text 消息(过滤 tool_result 回执),
+// 按时间顺序返回 [{ts, text}]。这是周报起草的主证据 —— 用户的真实意图 / 卡点 / 转折,
+// 唯一没被 Haiku 摘要过滤掉的"人话"。assistant 输出不抽,那部分已经在 git 里物化了。
+async function extractUserTurns(jsonlPath, opts = {}) {
+  const { maxCharsPerTurn = 0 } = opts; // 0 = 不截断
+  const rl = readline.createInterface({
+    input: fs.createReadStream(jsonlPath, { encoding: 'utf8' }),
+    crlfDelay: Infinity,
+  });
+
+  const turns = [];
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (entry.type !== 'user') continue;
+    const msg = entry.message;
+    if (!msg) continue;
+    const text = textOfContent(msg.content);
+    if (!text) continue; // 纯 tool_result(无文本)跳过
+    const hasToolResult =
+      Array.isArray(msg.content) && msg.content.some((p) => p && p.type === 'tool_result');
+    if (hasToolResult && !text) continue;
+    turns.push({
+      ts: entry.timestamp || null,
+      text: maxCharsPerTurn > 0 ? clip(text, maxCharsPerTurn) : text,
+    });
+  }
+  return turns;
+}
+
+module.exports = { buildSessionCard, gitCommitsInWindow, extractUserTurns };
 
 if (require.main === module) {
-  const path = process.argv[2];
-  if (!path) {
+  const args = process.argv.slice(2);
+  // CLI:`node parse-jsonl.js --user-turns <jsonl>` 输出文本块给主对话直读
+  if (args[0] === '--user-turns') {
+    const jsonlPath = args[1];
+    if (!jsonlPath) {
+      console.error('Usage: node parse-jsonl.js --user-turns <jsonl-path> [--max-chars N]');
+      process.exit(1);
+    }
+    const maxIdx = args.indexOf('--max-chars');
+    const maxCharsPerTurn = maxIdx >= 0 ? parseInt(args[maxIdx + 1], 10) || 0 : 0;
+    extractUserTurns(jsonlPath, { maxCharsPerTurn }).then(
+      (turns) => {
+        for (const t of turns) {
+          process.stdout.write(`[${t.ts || '?'}]\n${t.text}\n---\n`);
+        }
+      },
+      (err) => {
+        console.error(err);
+        process.exit(1);
+      },
+    );
+    return;
+  }
+  const jsonlPath = args[0];
+  if (!jsonlPath) {
     console.error('Usage: node parse-jsonl.js <jsonl-path>');
+    console.error('       node parse-jsonl.js --user-turns <jsonl-path> [--max-chars N]');
     process.exit(1);
   }
-  buildSessionCard(path).then(
+  buildSessionCard(jsonlPath).then(
     (card) => console.log(JSON.stringify(card, null, 2)),
     (err) => {
       console.error(err);

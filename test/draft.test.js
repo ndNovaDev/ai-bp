@@ -3,26 +3,7 @@ const assert = require('node:assert/strict');
 const {
   titleToSlug,
   extractTitle,
-  STYLE_GUIDE,
 } = require('../scripts/lib/draft');
-
-// ─── STYLE_GUIDE sanity ──────────────────────────────────────────────
-
-test('STYLE_GUIDE 存在且很短(防止退化成均值化锚点)', () => {
-  // v3 设计:短风格方向锚,3-8 行预期。测试上限 20 行 —
-  // 防止 future-self 塞回长篇 style brief 或 do/don't 清单(那会回到
-  // AUDITOR_LENS / AI_TELLS 的失败模式:规则本身变成均值化锚点)
-  assert.equal(typeof STYLE_GUIDE, 'string');
-  const lines = STYLE_GUIDE.split('\n').length;
-  assert.ok(lines <= 20, `STYLE_GUIDE 有 ${lines} 行,超过上限 20`);
-});
-
-test('STYLE_GUIDE 不复刻 AI_TELLS / AUDITOR_LENS 的形式审计语言', () => {
-  // 这些词进了 STYLE_GUIDE 就意味着退化回 "列规则" 模式
-  for (const banned of ['密度', '否定式对仗', '挂尾', 'inline-header', '营销腔', '学术腔']) {
-    assert.doesNotMatch(STYLE_GUIDE, new RegExp(banned, 'i'), `STYLE_GUIDE 不应包含 "${banned}"`);
-  }
-});
 
 // ─── titleToSlug ──────────────────────────────────────────────────────
 
@@ -68,8 +49,10 @@ test('extractTitle: 没 H1 时返回 untitled', () => {
 
 // ─── 历代约束都已删除,确认不再 export ─────────────────────────────────
 
-test('lib/draft.js 只暴露 STYLE_GUIDE + utils, 历代约束都删了', () => {
+test('lib/draft.js 只暴露 titleToSlug + extractTitle, 历代约束/锚点都删了', () => {
   const draft = require('../scripts/lib/draft');
+  // v3 STYLE_GUIDE 也已经删除
+  assert.equal(typeof draft.STYLE_GUIDE, 'undefined');
   // v1: 内容审计探针 + 黑名单 + 结构模板
   assert.equal(typeof draft.AUDITOR_LENS, 'undefined');
   assert.equal(typeof draft.BANNED_PHRASES, 'undefined');
@@ -81,6 +64,6 @@ test('lib/draft.js 只暴露 STYLE_GUIDE + utils, 历代约束都删了', () => 
   assert.equal(typeof draft.proposeAndProbe, 'undefined');
   assert.equal(typeof draft.finalize, 'undefined');
   assert.equal(typeof draft.MODEL, 'undefined');
-  // v2: AI_TELLS 形式自检 — 换成预设结构 + 短 STYLE_GUIDE 后不再需要
+  // v2: AI_TELLS 形式自检
   assert.equal(typeof draft.AI_TELLS, 'undefined');
 });
