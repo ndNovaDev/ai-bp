@@ -66,19 +66,40 @@ function tryHeuristicScore(card) {
   // 实测自 0.1.40:本地 261 个 Haiku-scored 会话里,凡命中
   //   filesEdited==0 && commits==0 && totalTools<10 && turns<12 && !hasEdit
   // 的 29 条,Haiku 给的分数全在 0-59 区间(主要在 10-30),0 条达到 60(周报候选门槛)。
-  // 也就是说这条规则不会误伤任何 gold 会话,纯粹把"中等长度的查询/排错/请教"挡在
-  // Haiku 之外。比规则 1/2 放宽到 turns<12 + totalTools<10,因为这类会话即便聊得久
-  // 也没东西能落地。如果未来误判,把 turns 或 totalTools 上限再压一压即可。
+  // 0.1.45 放宽到 turns<20 && totalTools<15 — 同样无任何文件改动 + 无 commit,这个范围
+  // 在实测数据里仍全部 < 60 分。零持久化的查询/排错/请教即便聊更久也不出 gold。
   if (
     !hasEditTool(card.tools) &&
     filesCount === 0 &&
     commits === 0 &&
-    totalTools < 10 &&
-    turns < 12
+    totalTools < 15 &&
+    turns < 20
   ) {
     return {
       score: 20,
-      summary: `中等长度对话(<12 轮 / <10 次工具调用),${NO_EDIT_NOTE}。本地启发式判定为低值会话。`,
+      summary: `中等长度对话(<20 轮 / <15 次工具调用),${NO_EDIT_NOTE}。本地启发式判定为低值会话。`,
+      highlights: [],
+      tags: ['chat'],
+      cost: 0,
+      model: 'heuristic-v1',
+    };
+  }
+
+  // 规则 4(0.1.45 新增):小规模改文件但完全没落地。
+  // 改了 1-2 个文件、没 commit、轮次低 — 通常是"改了个 dotfile / 试试 prompt 模板 /
+  // 改两行又回滚"。给 30 分(略高于规则 3,因为有动作)。
+  // 触发上限刻意压得严:filesCount ≤ 2 是关键护栏 — 改 3+ 文件可能是真的多文件
+  // 重构没来得及 commit,放给 Haiku 评。
+  if (
+    hasEditTool(card.tools) &&
+    filesCount > 0 &&
+    filesCount <= 2 &&
+    commits === 0 &&
+    turns < 10
+  ) {
+    return {
+      score: 30,
+      summary: `小规模改动(≤2 个文件 / <10 轮)且无 commit。本地启发式判定为低落地度会话。`,
       highlights: [],
       tags: ['chat'],
       cost: 0,

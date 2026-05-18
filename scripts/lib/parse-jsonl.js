@@ -13,6 +13,14 @@ const KEY_TURN_MIN_TOOLS = 3;
 const KEY_TURN_TEXT_CAP = 400;
 const MAX_KEY_TURNS = 5;
 
+// 0.1.45:大 jsonl 激进压。>1MB 文件出来的 keyTurns 会肥到把 Haiku 输出顶爆 5K tokens,
+// 触发 60s 墙(0.1.45 之前的 100+ 个 180s timeout 几乎全是这类文件)。
+// 实测把上限砍半 + 单条文本砍到 1/3,prompt 从 ~3K 降到 ~1.5K,Haiku output 顺势降一半,
+// 评分质量在 spot-check 上没明显损失(本来这种"聊很久"会话也评不到 gold)。
+const LARGE_JSONL_THRESHOLD = 1_000_000;
+const LARGE_MAX_KEY_TURNS = 2;
+const LARGE_KEY_TURN_TEXT_CAP = 150;
+
 // Claude Code 框架在 user 消息里塞的 XML 包装块,不是用户人话:
 // /clear 之类的 slash command 会被记成 <command-name>/clear</command-name>;
 // `!` bash 触发会拿 <bash-input>/<bash-stdout>/<bash-stderr>; 还有 <system-reminder>
@@ -179,6 +187,11 @@ async function buildSessionCard(jsonlPath) {
     events.push({ role, text, toolUses: toolUses.map((t) => t.name), ts: entry.timestamp });
   }
 
+  // 大 jsonl 走更狠的压缩档位(见上方常量注释)
+  const isLarge = stat.size >= LARGE_JSONL_THRESHOLD;
+  const maxKeyTurns = isLarge ? LARGE_MAX_KEY_TURNS : MAX_KEY_TURNS;
+  const textCap = isLarge ? LARGE_KEY_TURN_TEXT_CAP : KEY_TURN_TEXT_CAP;
+
   // 挑 keyTurns:用户消息 ≥ 80 字 / assistant 伴随 ≥ 3 工具
   const candidates = [];
   for (let i = 0; i < events.length; i++) {
@@ -190,12 +203,12 @@ async function buildSessionCard(jsonlPath) {
     }
   }
   candidates.sort((a, b) => b.score - a.score);
-  const picked = candidates.slice(0, MAX_KEY_TURNS).sort((a, b) => a.idx - b.idx);
+  const picked = candidates.slice(0, maxKeyTurns).sort((a, b) => a.idx - b.idx);
   const keyTurns = picked.map(({ idx }) => {
     const ev = events[idx];
     return {
       role: ev.role,
-      text: clip(ev.text, KEY_TURN_TEXT_CAP),
+      text: clip(ev.text, textCap),
       tools: ev.toolUses,
     };
   });

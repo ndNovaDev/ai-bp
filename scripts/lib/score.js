@@ -4,7 +4,11 @@
 const { spawn } = require('child_process');
 
 const MODEL = process.env.AIBP_SCORE_MODEL || 'claude-haiku-4-5';
-const TIMEOUT_MS = Number(process.env.AIBP_SCORE_TIMEOUT_MS || 180_000);
+// 0.1.45:180s → 60s。配合 --system-prompt 替换 + --disallowed-tools "*",
+// Haiku 不再在工具上反复思考,输出从 ~5K tokens 降到 ~2.5K,墙钟从 ~45s 降到 ~25s,
+// 60s 上限足够覆盖正常波动。撞 60s 的 case 大概率是卡片本身太大触发了无穷输出,
+// retry 也没用 — scoreCard 里已经把 timeout 排除出 retry 分支。
+const TIMEOUT_MS = Number(process.env.AIBP_SCORE_TIMEOUT_MS || 60_000);
 
 const SYSTEM = `你在评估一段 Claude Code 会话作为"AI 最佳实践案例"的含金量。
 评分维度:问题复杂度 / 工作流创新度(工具组合 / Skill / MCP / hook / plugin)/ 可复用性(是否产出可沉淀的脚本/skill/hook/PR)/ 故事完整度(问题 → 方法 → 结果)。
@@ -90,19 +94,30 @@ const SCORE_SCHEMA = {
   },
 };
 
+// 标记 timeout 错误,scoreCard 据此跳过 retry。timeout 是确定性的(同 prompt 必然再超),
+// retry 只会浪费 2× 时间。0.1.45 之前 retry timeout 是把 60→120s 的元凶。
+class TimeoutError extends Error {
+  constructor(msg) { super(msg); this.code = 'TIMEOUT'; }
+}
+
 function runClaude(prompt) {
   return new Promise((resolve, reject) => {
+    // 0.1.45 关键改动:`--system-prompt` 整体替换默认 agentic system prompt(原本是
+    // append),配合 `--disallowed-tools "*"` 不让 Haiku 看到任何工具。实测包袱从 24K
+    // 降到 12K,output 从 5K 降到 2.5K,cost -36% / 墙钟 -42%。详见 0.1.45 commit。
     const args = [
       '-p',
       '--bare',
       '--no-session-persistence',
       '--permission-mode',
       'bypassPermissions',
+      '--disallowed-tools',
+      '*',
       '--model',
       MODEL,
       '--output-format',
       'json',
-      '--append-system-prompt',
+      '--system-prompt',
       SYSTEM,
       '--json-schema',
       JSON.stringify(SCORE_SCHEMA),
@@ -112,7 +127,7 @@ function runClaude(prompt) {
     let stderr = '';
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
-      reject(new Error(`claude -p timeout after ${TIMEOUT_MS}ms`));
+      reject(new TimeoutError(`claude -p timeout after ${TIMEOUT_MS}ms`));
     }, TIMEOUT_MS);
 
     child.stdout.on('data', (d) => (stdout += d.toString()));
@@ -159,7 +174,8 @@ function parseResult(stdout) {
 
 async function scoreCard(card) {
   // 一次重试:覆盖网络抖动 / Anthropic 偶发 502 这类瞬时错。
-  // 还失败就丢给调用方记 error,mtime 未变下一轮 scan 自然重跑(不重复扣 cache 命中的钱)。
+  // 0.1.45:timeout 不再 retry — 同 prompt 必然再超,retry 只浪费 2× 时间。
+  // 还失败就丢给调用方记 error,后续 scan 会按 #5 失败缓存策略处理。
   const prompt = buildUserPrompt(card);
   let lastErr;
   for (let attempt = 0; attempt < 2; attempt++) {
@@ -168,6 +184,7 @@ async function scoreCard(card) {
       return parseResult(stdout);
     } catch (err) {
       lastErr = err;
+      if (err.code === 'TIMEOUT') throw err; // timeout 直接抛,不进 retry
       // 第二次重试前小退避 1-2s,避免抖动期再撞同一波。
       if (attempt === 0) await new Promise((r) => setTimeout(r, 1000 + Math.random() * 1000));
     }
@@ -200,6 +217,7 @@ module.exports = {
   SYSTEM,
   TAG_ENUM,
   filterTags,
+  TimeoutError,
 };
 
 if (require.main === module) {

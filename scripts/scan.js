@@ -21,9 +21,10 @@ const { tryHeuristicScore } = require('./lib/heuristic');
 const { INDEX_PATH, LOG_PATH } = require('./lib/paths');
 
 const PROJECTS_ROOT = path.join(process.env.HOME, '.claude/projects');
-// 走 `claude -p` 子进程,每个并发约占 200-500MB 内存。8 在现代 mac 上稳。
-// 想再快 / 再省可改 AIBP_CONCURRENCY。
-const CONCURRENCY = Number(process.env.AIBP_CONCURRENCY || 8);
+// 走 `claude -p` 子进程,每个并发约占 200-500MB 内存。
+// 0.1.45:8→12。配合 0.1.45 把单次墙钟从 ~45s 压到 ~25s,12 并发峰值内存 4-6GB,
+// 现代 mac 稳。想再快 / 再省可改 AIBP_CONCURRENCY。
+const CONCURRENCY = Number(process.env.AIBP_CONCURRENCY || 12);
 
 // 不限 cwd 范围:全部会话都纳入候选,由 Haiku 评分自己淘汰低含金量。
 // 如果以后要排除某些目录,在这里加 EXCLUDE_PREFIXES。
@@ -40,7 +41,7 @@ function parseRecent(expr) {
 }
 
 function parseArgs(argv) {
-  const args = { rescore: false, limit: 0, since: null, countOnly: false };
+  const args = { rescore: false, limit: 0, since: null, countOnly: false, retryFailed: false };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--rescore' || a === '--force' || a === '--full') args.rescore = true;
@@ -48,8 +49,71 @@ function parseArgs(argv) {
     else if (a === '--since') args.since = argv[++i];
     else if (a === '--recent') args.since = parseRecent(argv[++i]);
     else if (a === '--count-only') args.countOnly = true;
+    else if (a === '--retry-failed') args.retryFailed = true;
   }
   return args;
+}
+
+// 0.1.45 失败缓存:
+// score.js 偶发会失败(timeout / Haiku 不遵守 schema / exit 1)。失败的 mtime 没变,
+// 默认每次 scan 都会重撞同一面墙 — 100+ 个 timeout 会话每次 scan 多花 ~50 min。
+// 但"永封"也不对(失败可能是临时的,会话本身是好会话),所以采用三段式:
+//   - 同 mtime 失败 < 3 次:正常重扫(覆盖偶发网络抖动)
+//   - 同 mtime 失败 ≥ 3 次 且 7 天内:跳过(避免反复撞)
+//   - 同 mtime 失败 ≥ 3 次 且 > 7 天:再试一次(自然解封)
+//   - 用户加 --retry-failed:全部强制重试,不看 attempts
+// 失败记录用 sidecar:~/.ai-best-practice/data/failures.jsonl,以 jsonlPath 为键。
+const FAIL_BACKOFF_ATTEMPTS = 3;
+const FAIL_BACKOFF_DAYS = 7;
+const FAIL_BACKOFF_MS = FAIL_BACKOFF_DAYS * 86400_000;
+const FAILURES_PATH = path.join(path.dirname(INDEX_PATH), 'failures.jsonl');
+
+function loadFailures() {
+  if (!fs.existsSync(FAILURES_PATH)) return new Map();
+  const map = new Map();
+  for (const line of fs.readFileSync(FAILURES_PATH, 'utf8').split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      const obj = JSON.parse(line);
+      if (obj.jsonlPath) map.set(obj.jsonlPath, obj);
+    } catch {
+      /* skip */
+    }
+  }
+  return map;
+}
+
+function writeFailures(map) {
+  fs.mkdirSync(path.dirname(FAILURES_PATH), { recursive: true });
+  const lines = [...map.values()].map((o) => JSON.stringify(o));
+  const tmp = FAILURES_PATH + '.tmp';
+  fs.writeFileSync(tmp, lines.join('\n') + (lines.length ? '\n' : ''));
+  fs.renameSync(tmp, FAILURES_PATH);
+}
+
+// 判定一个文件是否应被失败缓存拦住。
+function shouldSkipForFailure(file, failuresMap, retryFailed) {
+  if (retryFailed) return false;
+  const f = failuresMap.get(file.path);
+  if (!f) return false;
+  // mtime 变了 → 文件改了,重新评(顺便从 failures 表里清掉,在调用方做)
+  if (Math.floor(file.mtimeMs / 1000) !== f.jsonlMtime) return false;
+  if ((f.attempts || 0) < FAIL_BACKOFF_ATTEMPTS) return false;
+  const lastTs = Date.parse(f.lastFailAt || '');
+  if (!Number.isFinite(lastTs)) return false;
+  return Date.now() - lastTs < FAIL_BACKOFF_MS;
+}
+
+function recordFailure(failuresMap, file, reason) {
+  const prev = failuresMap.get(file.path);
+  const sameMtime = prev && Math.floor(file.mtimeMs / 1000) === prev.jsonlMtime;
+  failuresMap.set(file.path, {
+    jsonlPath: file.path,
+    jsonlMtime: Math.floor(file.mtimeMs / 1000),
+    attempts: (sameMtime ? prev.attempts || 0 : 0) + 1,
+    lastFailAt: new Date().toISOString(),
+    lastReason: reason || 'unknown',
+  });
 }
 
 // 把候选 + 已索引 → 拆出 newToScore / alreadyScored / unknown(没记录 jsonlPath 的旧索引)
@@ -131,13 +195,17 @@ function cwdAllowed(cwd) {
   return !EXCLUDE_PREFIXES.some((p) => cwd === p || cwd.startsWith(p + '/'));
 }
 
-async function processOne(file, indexMap, byPath, force) {
+async function processOne(file, indexMap, byPath, force, failuresMap, retryFailed) {
   // 早 short-circuit:索引里已有该 jsonlPath 且 mtime 一致 → 直接报 cached,
   // 不去 parse + 跑 git log。否则 147 个老会话每次 pick 都白扫一次(~10s 起步)。
   if (!force) {
     const cachedRow = byPath.get(file.path);
     if (cachedRow && Math.floor(file.mtimeMs / 1000) === cachedRow.jsonlMtime) {
       return { status: 'cached' };
+    }
+    // 失败回避:同 mtime 失败 ≥3 次且 7 天内 → 跳过
+    if (shouldSkipForFailure(file, failuresMap, retryFailed)) {
+      return { status: 'fail-skipped' };
     }
   }
 
@@ -146,7 +214,7 @@ async function processOne(file, indexMap, byPath, force) {
     card = await buildSessionCard(file.path);
   } catch (err) {
     log(`parse failed ${file.path}: ${err.message}`);
-    return { status: 'error', reason: 'parse' };
+    return { status: 'error', reason: 'parse', file };
   }
   if (!card.sessionId) return { status: 'skipped', reason: 'no-session-id' };
   if (!cwdAllowed(card.cwd)) return { status: 'skipped', reason: 'cwd-excluded' };
@@ -171,9 +239,12 @@ async function processOne(file, indexMap, byPath, force) {
       scored = await scoreCard(card);
     } catch (err) {
       log(`score failed ${file.path}: ${err.message}`);
-      return { status: 'error', reason: 'score' };
+      return { status: 'error', reason: 'score', file };
     }
   }
+
+  // 成功了:从失败表里清掉(如果有)
+  if (failuresMap.has(file.path)) failuresMap.delete(file.path);
 
   const row = {
     sessionId: card.sessionId,
@@ -231,6 +302,7 @@ async function main() {
   if (args.limit > 0) files = files.slice(0, args.limit);
 
   const indexMap = loadIndex();
+  const failuresMap = loadFailures();
   // byPath:jsonlPath → row。让 processOne 在 parse 之前就能判定缓存命中。
   const byPath = new Map();
   for (const row of indexMap.values()) {
@@ -240,10 +312,16 @@ async function main() {
   if (args.countOnly) {
     // 干跑:只数候选,不打分。slash command 用这个做 preflight 估算。
     const { alreadyScored, newToScore } = classifyCandidates(files, indexMap);
+    // 失败回避:被 backoff 拦的也单列,前台 preflight 可以让用户知道
+    let failSkipped = 0;
+    for (const f of files) {
+      if (shouldSkipForFailure(f, failuresMap, args.retryFailed)) failSkipped++;
+    }
     process.stdout.write(JSON.stringify({
       candidates: files.length,
       alreadyScored,
       newToScore,
+      failSkipped,
       concurrency: CONCURRENCY,
       indexSize: indexMap.size,
     }));
@@ -252,7 +330,7 @@ async function main() {
 
   const startedAt = Date.now();
   const writeEvery = 5;
-  const stats = { total: files.length, ok: 0, cached: 0, skipped: 0, error: 0, heuristic: 0, cost: 0 };
+  const stats = { total: files.length, ok: 0, cached: 0, skipped: 0, error: 0, heuristic: 0, failSkipped: 0, cost: 0 };
   let processed = 0;
 
   console.log(`[scan] candidates=${files.length} concurrency=${CONCURRENCY} rescore=${args.rescore}`);
@@ -276,7 +354,7 @@ async function main() {
     }
     console.log(
       `[scan] heartbeat elapsed=${elapsed.toFixed(0)}s | ${processed}/${stats.total} ` +
-      `(ok=${stats.ok} heur=${stats.heuristic} cached=${stats.cached} skipped=${stats.skipped} error=${stats.error}) ` +
+      `(ok=${stats.ok} heur=${stats.heuristic} cached=${stats.cached} skipped=${stats.skipped} fail-skipped=${stats.failSkipped} error=${stats.error}) ` +
       `| cost=$${stats.cost.toFixed(2)} | ETA=${eta}`
     );
   }, 10_000);
@@ -285,7 +363,7 @@ async function main() {
   await runPool(
     files,
     async (f) => {
-      const res = await processOne(f, indexMap, byPath, args.rescore);
+      const res = await processOne(f, indexMap, byPath, args.rescore, failuresMap, args.retryFailed);
       processed++;
       if (res.status === 'ok') {
         stats.ok++;
@@ -296,10 +374,13 @@ async function main() {
         console.log(`[${processed}/${stats.total}] heur score=${res.score} cost=$0 ${f.path.split('/').pop()}`);
       } else if (res.status === 'cached') {
         stats.cached++;
+      } else if (res.status === 'fail-skipped') {
+        stats.failSkipped++;
       } else if (res.status === 'skipped') {
         stats.skipped++;
       } else {
         stats.error++;
+        recordFailure(failuresMap, res.file || f, res.reason);
         console.log(`[${processed}/${stats.total}] error ${res.reason} ${f.path.split('/').pop()}`);
       }
       // 每 5 条"实打到索引"就持久化一次。heuristic 也算进去 — 否则它们直到 done 才落盘。
@@ -312,19 +393,26 @@ async function main() {
 
   clearInterval(heartbeat);
   writeIndex(indexMap);
+  writeFailures(failuresMap);
   const elapsedSec = (Date.now() - startedAt) / 1000;
   const avgCost = stats.ok > 0 ? stats.cost / stats.ok : 0;
   const avgSec = stats.ok > 0 ? elapsedSec / stats.ok : 0;
   console.log(
-    `[scan] done total=${stats.total} ok=${stats.ok} heuristic=${stats.heuristic} cached=${stats.cached} skipped=${stats.skipped} error=${stats.error} ` +
+    `[scan] done total=${stats.total} ok=${stats.ok} heuristic=${stats.heuristic} cached=${stats.cached} skipped=${stats.skipped} fail-skipped=${stats.failSkipped} error=${stats.error} ` +
     `cost=$${stats.cost.toFixed(2)} elapsed_sec=${elapsedSec.toFixed(1)} avg_cost=$${avgCost.toFixed(4)} avg_sec=${avgSec.toFixed(2)}`
   );
   if (stats.error > 0) {
-    // 失败的会话 mtime 没变,下次扫会自动重试 — 用户只需再跑一次。
+    // 失败 < 3 次的 mtime 下次还会重试;≥3 次进入 7 天回避。
     console.log(
-      `\n⚠️  本轮有 ${stats.error} 条会话评分失败(超时或网络抖动)。` +
-      `这些会话没有入库,下次跑 /ai-practice-scan 会自动重试(已成功的会被 mtime 缓存跳过,不重复花钱)。` +
+      `\n⚠️  本轮有 ${stats.error} 条会话评分失败。下次 scan 会继续重试,` +
+      `同 mtime 失败 ≥${FAIL_BACKOFF_ATTEMPTS} 次后进入 ${FAIL_BACKOFF_DAYS} 天回避(--retry-failed 可强制重试)。` +
       `\n   详细错误见日志:${LOG_PATH}`
+    );
+  }
+  if (stats.failSkipped > 0) {
+    console.log(
+      `\nℹ️  ${stats.failSkipped} 条会话因反复失败进入 ${FAIL_BACKOFF_DAYS} 天回避,本轮跳过。` +
+      ` 想立即重试:加 --retry-failed。`
     );
   }
 }

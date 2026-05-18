@@ -58,12 +58,39 @@ test('有 commit 一律不命中(交给 Haiku 判)', () => {
   assert.equal(tryHeuristicScore(card), null);
 });
 
-test('有 filesEdited 一律不命中', () => {
+test('规则 4 边界:filesEdited > 2 不命中(可能是真重构没来得及 commit)', () => {
+  // 0.1.45:规则 4 命中"小规模 + 无 commit + 低轮次",上限是 filesCount ≤ 2。
+  // 改 3+ 文件留给 Haiku 评。
   const card = {
     turns: 2,
-    tools: { Edit: 1 },
-    filesEdited: ['/path/file.ts'],
+    tools: { Edit: 3 },
+    filesEdited: ['/a.ts', '/b.ts', '/c.ts'],
     gitCommitsInWindow: [],
+  };
+  assert.equal(tryHeuristicScore(card), null);
+});
+
+test('规则 4:小规模改文件 + 无 commit + 低轮次 → 30 分(0.1.45 新增)', () => {
+  // 改 1-2 个文件 / 无 commit / <10 轮 — 典型的 dotfile / prompt 模板 / 试两行 → 回滚。
+  // 实测这类全在 0-59 分区间,不出 gold。
+  const card = {
+    turns: 5,
+    tools: { Edit: 2, Read: 3 },
+    filesEdited: ['/path/dotfile.zshrc'],
+    gitCommitsInWindow: [],
+  };
+  const r = tryHeuristicScore(card);
+  assert.equal(r.score, 30);
+  assert.deepEqual(r.tags, ['chat']);
+});
+
+test('规则 4 边界:有 commit 不命中', () => {
+  // 哪怕只改 1 文件,只要 commit 了就让 Haiku 评。
+  const card = {
+    turns: 5,
+    tools: { Edit: 1 },
+    filesEdited: ['/a.ts'],
+    gitCommitsInWindow: ['abc fix typo'],
   };
   assert.equal(tryHeuristicScore(card), null);
 });
@@ -92,9 +119,9 @@ test('规则 3:中等长度 + 零产出 → 20 分(0.1.41 新增)', () => {
   assert.deepEqual(r.tags, ['chat']);
 });
 
-test('规则 3 边界:turns=12 留给 Haiku', () => {
+test('规则 3 边界:turns=20 留给 Haiku(0.1.45 放宽到 <20)', () => {
   const card = {
-    turns: 12,
+    turns: 20,
     tools: { Read: 3, Bash: 3 },
     filesEdited: [],
     gitCommitsInWindow: [],
@@ -102,14 +129,26 @@ test('规则 3 边界:turns=12 留给 Haiku', () => {
   assert.equal(tryHeuristicScore(card), null);
 });
 
-test('规则 3 边界:totalTools=10 留给 Haiku', () => {
+test('规则 3 边界:totalTools=15 留给 Haiku(0.1.45 放宽到 <15)', () => {
   const card = {
     turns: 5,
-    tools: { Read: 5, Bash: 5 },
+    tools: { Read: 8, Bash: 7 },
     filesEdited: [],
     gitCommitsInWindow: [],
   };
   assert.equal(tryHeuristicScore(card), null);
+});
+
+test('规则 3 放宽后:turns=15 + totalTools=12 + 零产出 命中 20 分', () => {
+  // 0.1.45 把上限从 turns<12/totalTools<10 放到 <20/<15,这条原本撞 Haiku,现在 heur 接住
+  const card = {
+    turns: 15,
+    tools: { Read: 7, Bash: 5 },
+    filesEdited: [],
+    gitCommitsInWindow: [],
+  };
+  const r = tryHeuristicScore(card);
+  assert.equal(r.score, 20);
 });
 
 test('规则 3:有 commit 不命中', () => {
