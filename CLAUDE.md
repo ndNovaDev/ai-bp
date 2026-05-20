@@ -51,7 +51,7 @@ at `~/.ai-best-practice/`:
 ```
 ~/.ai-best-practice/
 ├── data/index.jsonl     # one row per session, sessionId is primary key
-├── weekly/<期号>-<slug>.md   # /ai-practice-pick output
+├── weekly/<期号>-<slug>/<期号>-<slug>.md   # /ai-practice-pick output;一篇周报一个独立文件夹
 └── logs/ai-best-practice.log # all log output (hook + scan + score)
 ```
 

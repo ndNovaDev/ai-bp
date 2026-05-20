@@ -29,8 +29,8 @@ ai-best-practice/
 
 ```
 ~/.ai-best-practice/
-├── data/index.jsonl               # 评分索引(append/覆盖,以 sessionId 为主键)
-└── weekly/                        # /ai-practice-pick 产出
+├── data/index.jsonl                       # 评分索引(append/覆盖,以 sessionId 为主键)
+└── weekly/<期号>-<slug>/<期号>-<slug>.md  # /ai-practice-pick 产出,一篇周报一个独立文件夹(配图等并存)
 ```
 
 ## 安装
@@ -112,7 +112,7 @@ SessionEnd hook 后台异步打分并写入 `~/.ai-best-practice/data/index.json
 /ai-practice-pick 最近一周高分前 5 条
 ```
 
-流程:列出候选 → 主对话 Claude 聚类 + 二次排序 → `AskUserQuestion` 勾 1–3 个 topic → 按需收证据(index.jsonl 元数据 / `parse-jsonl --user-turns` 抽 user 原话 / git log / 关键文件)→ **逐 topic 一次采访**(Claude 先草一段全文简述,然后 `AskUserQuestion` 让你二选一:采纳 Claude 的简述,或在 Other 里填你自己想要的方向 —— 大纲、要突出/避开的点、口吻调整都行) → 按你给的方向写第一版 → 句式打散(每子句重写,长短随机 + 句式随机 + 王小波口吻,唯一硬约束是通顺) → `Write` 到 `~/.ai-best-practice/weekly/<期号>-<案例名 slug>.md`。
+流程:列出候选 → 主对话 Claude 聚类 + 二次排序 → `AskUserQuestion` 勾 1–3 个 topic → 按需收证据(index.jsonl 元数据 / `parse-jsonl --user-turns` 抽 user 原话 / git log / 关键文件)→ **逐 topic 一次采访**(Claude 先草一段全文简述,然后 `AskUserQuestion` 让你二选一:采纳 Claude 的简述,或在 Other 里填你自己想要的方向 —— 大纲、要突出/避开的点、口吻调整都行) → 按你给的方向写第一版 → 句式打散(每子句重写,长短随机 + 句式随机 + 王小波口吻,唯一硬约束是通顺) → `Write` 到 `~/.ai-best-practice/weekly/<期号>-<案例名 slug>/<期号>-<案例名 slug>.md`(一篇周报一个独立文件夹,配图 / excalidraw 源文件等并存)。
 
 起草直接在你当前会话里跑,复用模型 + 鉴权,token 走 `/cost`。**落盘即交付,不是草稿**。
 

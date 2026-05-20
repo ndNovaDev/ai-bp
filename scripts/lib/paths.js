@@ -8,7 +8,7 @@
 // 目录结构:
 //   ~/.ai-best-practice/
 //   ├── data/index.jsonl
-//   ├── weekly/<期号>-<slug>.md
+//   ├── weekly/<期号>-<slug>/<期号>-<slug>.md   # 每篇一个独立文件夹,配图 / 源文件并存
 //   └── logs/ai-best-practice.log
 
 const fs = require('fs');
@@ -77,6 +77,30 @@ function migrateLegacyOnce() {
   }
 }
 
+// 0.1.49: weekly 从扁平 <slug>.md 改成 <slug>/<slug>.md 一文件夹一案例。
+// 把 WEEKLY_DIR 下散落的文件按 basename(去扩展名)归组,各自塞进同名子文件夹。
+// 这样 .md / .excalidraw / .png / .pdf 等同名兄弟自动并入一个案例文件夹。
+function migrateFlatWeeklyToFolders() {
+  try {
+    if (!fs.existsSync(WEEKLY_DIR)) return;
+    const entries = fs.readdirSync(WEEKLY_DIR, { withFileTypes: true });
+    for (const e of entries) {
+      if (!e.isFile()) continue;
+      if (e.name.startsWith('.')) continue;
+      const base = e.name.replace(/\.[^.]+$/, '') || e.name;
+      if (!base) continue;
+      const folder = path.join(WEEKLY_DIR, base);
+      if (!fs.existsSync(folder)) fs.mkdirSync(folder, { recursive: true });
+      const src = path.join(WEEKLY_DIR, e.name);
+      const dst = path.join(folder, e.name);
+      if (!fs.existsSync(dst)) fs.renameSync(src, dst);
+    }
+  } catch {
+    // 同样 best-effort
+  }
+}
+
 migrateLegacyOnce();
+migrateFlatWeeklyToFolders();
 
 module.exports = { DATA_DIR, INDEX_PATH, WEEKLY_DIR, LOG_PATH, PLUGIN_ROOT };

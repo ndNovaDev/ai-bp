@@ -228,14 +228,18 @@ options 两个:
 
 ```bash
 node -e '
+const fs = require("fs");
 const path = require("path");
 const { titleToSlug } = require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/draft");
 const { WEEKLY_DIR } = require(process.env.CLAUDE_PLUGIN_ROOT + "/scripts/lib/paths");
-console.log(path.join(WEEKLY_DIR, process.env.WEEK_PREFIX + "-" + titleToSlug(process.env.TITLE) + ".md"));
+const slug = process.env.WEEK_PREFIX + "-" + titleToSlug(process.env.TITLE);
+const folder = path.join(WEEKLY_DIR, slug);
+fs.mkdirSync(folder, { recursive: true });
+console.log(path.join(folder, slug + ".md"));
 ' # TITLE=<案例名 或 期号> WEEK_PREFIX=<2026-W20 或 recent-3d>
 ```
 
-`WEEK_PREFIX` 没 ISO 周时退回 `recent-Nd`。`Write` 落盘到 `~/.ai-best-practice/weekly/<期号>-<slug>.md`。
+`WEEK_PREFIX` 没 ISO 周时退回 `recent-Nd`。`Write` 落盘到 `~/.ai-best-practice/weekly/<期号>-<slug>/<期号>-<slug>.md` —— 一篇周报一个独立文件夹,后续配图 / excalidraw 源文件 / PDF 之类的兄弟产物都塞进同一个文件夹。
 
 多 topic:一篇 markdown,H1 是期号,每 topic 一个 H2,**每 topic 内部用 H3 分小节**(步 7 第 4 条)。所有 topic 都过完步 5 + 步 6 + 步 7 + 步 8 之后再一次性落盘。落盘前自检:每个 H2 下面至少有 2 个 H3,没有 = 步 7 没做完,回去补。
 
